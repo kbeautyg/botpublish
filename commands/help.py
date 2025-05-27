@@ -1,18 +1,17 @@
-# commands/help.py
 from aiogram import Router
 from aiogram.types import Message
+from aiogram.filters import Command
 
 router = Router()
 
-@router.message(commands=["help"])
+@router.message(Command("help"))
 async def cmd_help(message: Message):
-    help_text = (
-        "Доступные команды:\n"
-        "/start - начать работу с ботом\n"
-        "/create - создать новый отложенный пост\n"
-        "/list - показать запланированные посты\n"
-        "/edit <id> - отредактировать запланированный пост\n"
-        "/delete <id> - удалить запланированный пост\n"
-        "/channels - управление списком каналов\n"
+    await message.answer(
+        "Команды:\n"
+        "/create – создать пост\n"
+        "/list – список отложенных\n"
+        "/edit <id> – редактировать\n"
+        "/delete <id> – удалить\n"
+        "/channels – управление каналами\n"
+        "/cancel – отменить ввод"
     )
-    await message.answer(help_text)
