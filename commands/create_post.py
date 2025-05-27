@@ -1,283 +1,192 @@
-# commands/create_post.py
-from aiogram import Router, types, F
+from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from datetime import datetime
 from states import CreatePost
 from storage import supabase_db
+import json
 
 router = Router()
 
 @router.message(Command("create"))
 async def cmd_create(message: Message, state: FSMContext):
-    # Check if there are any channels configured
-    channels = supabase_db.db.list_channels()
-    if not channels:
-        await message.answer("Нет доступных каналов. Сначала добавьте канал через команду /channels.")
+    if not supabase_db.db.list_channels():
+        await message.answer("Нет каналов. Добавьте через /channels.")
         return
-    # Start the FSM for creating a post
     await state.set_state(CreatePost.text)
-    await message.answer("Шаг 1/7: Отправьте текст поста (или /skip для пустого текста).")
+    await message.answer("Шаг 1/7: отправьте текст поста (или /skip).")
+
+# ---------- Шаг 1: текст ----------
+@router.message(CreatePost.text, Command("skip"))
+async def skip_text(message: Message, state: FSMContext):
+    await state.update_data(text="")
+    await next_media_step(message, state)
 
 @router.message(CreatePost.text)
-async def step_text(message: Message, state: FSMContext):
-    # Save post text (can be empty string if skipped)
-    text = message.text
-    if text and text.startswith("/skip"):
-        text = ""  # user chose to skip text
-    # Save text in FSM context
-    await state.update_data(text=text or "")
-    # Next step: media
+async def got_text(message: Message, state: FSMContext):
+    await state.update_data(text=message.text)
+    await next_media_step(message, state)
+
+async def next_media_step(message: Message, state: FSMContext):
     await state.set_state(CreatePost.media)
-    await message.answer("Шаг 2/7: Отправьте фото или видео для поста, или введите /skip, чтобы пропустить.")
+    await message.answer("Шаг 2/7: пришлите фото/видео или /skip.")
 
-@router.message(Command("skip"), CreatePost.media)
+# ---------- Шаг 2: медиа ----------
+@router.message(CreatePost.media, Command("skip"))
 async def skip_media(message: Message, state: FSMContext):
-    # No media
     await state.update_data(media_id=None, media_type=None)
-    # Next step: format
-    await state.set_state(CreatePost.format)
-    # Provide options for formatting (Markdown/HTML/None)
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            ["Markdown", "HTML", "Без форматирования"]
-        ],
-        one_time_keyboard=True,
-        resize_keyboard=True
-    )
-    await message.answer("Шаг 3/7: Выберите тип форматирования (Markdown, HTML или Без форматирования).", reply_markup=keyboard)
+    await ask_format(message, state)
 
-@router.message(F.photo, CreatePost.media)
-async def receive_photo(message: Message, state: FSMContext):
-    # User sent a photo
-    photo = message.photo[-1]
-    file_id = photo.file_id
-    await state.update_data(media_id=file_id, media_type="photo")
-    # Next: format
-    await state.set_state(CreatePost.format)
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            ["Markdown", "HTML", "Без форматирования"]
-        ],
-        one_time_keyboard=True,
-        resize_keyboard=True
-    )
-    await message.answer("Шаг 3/7: Выберите тип форматирования (Markdown, HTML или Без форматирования).", reply_markup=keyboard)
+@router.message(CreatePost.media, F.photo)
+async def got_photo(message: Message, state: FSMContext):
+    await state.update_data(media_id=message.photo[-1].file_id, media_type="photo")
+    await ask_format(message, state)
 
-@router.message(F.video, CreatePost.media)
-async def receive_video(message: Message, state: FSMContext):
-    # User sent a video
-    video = message.video
-    file_id = video.file_id
-    await state.update_data(media_id=file_id, media_type="video")
-    # Next: format
-    await state.set_state(CreatePost.format)
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            ["Markdown", "HTML", "Без форматирования"]
-        ],
-        one_time_keyboard=True,
-        resize_keyboard=True
-    )
-    await message.answer("Шаг 3/7: Выберите тип форматирования (Markdown, HTML или Без форматирования).", reply_markup=keyboard)
+@router.message(CreatePost.media, F.video)
+async def got_video(message: Message, state: FSMContext):
+    await state.update_data(media_id=message.video.file_id, media_type="video")
+    await ask_format(message, state)
 
 @router.message(CreatePost.media)
-async def wrong_media_type(message: Message):
-    # If user sends something other than photo/video or skip
-    await message.answer("Пожалуйста, отправьте фото или видео, либо используйте /skip для пропуска.")
+async def wrong_media(message: Message):
+    await message.answer("Отправьте фото/видео или /skip.")
+
+async def ask_format(message: Message, state: FSMContext):
+    await state.set_state(CreatePost.format)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[["Markdown", "HTML", "Без"]],
+        resize_keyboard=True, one_time_keyboard=True
+    )
+    await message.answer("Шаг 3/7: формат Markdown / HTML / Без", reply_markup=kb)
+
+# ---------- Шаг 3: формат ----------
+@router.message(CreatePost.format, Command("skip"))
+async def skip_format(message: Message, state: FSMContext):
+    await state.update_data(format="none")
+    await ask_buttons(message, state)
 
 @router.message(CreatePost.format)
-async def step_format(message: Message, state: FSMContext):
-    fmt = message.text.strip().lower()
-    parse_mode = None
-    if fmt in ("markdown", "html"):
-        parse_mode = fmt
-    elif fmt.startswith("без") or fmt == "none" or fmt == "no":
-        parse_mode = "none"
-    elif fmt.startswith("/skip"):
-        # Treat skip as no format
-        parse_mode = "none"
+async def got_format(message: Message, state: FSMContext):
+    fmt = message.text.lower()
+    if fmt.startswith("markdown"):
+        fmt = "markdown"
+    elif fmt.startswith("html"):
+        fmt = "html"
     else:
-        # Unrecognized input, ask again
-        await message.answer("Выберите формат: Markdown, HTML или Без форматирования (введите именно так).")
-        return
-    # Save format choice
-    await state.update_data(format=parse_mode)
-    # Remove the selection keyboard
-    await message.answer(f"Форматирование: {('без форматирования' if parse_mode == 'none' else parse_mode)}", reply_markup=ReplyKeyboardRemove())
-    # Next: inline buttons
-    await state.set_state(CreatePost.buttons)
-    await message.answer("Шаг 4/7: Отправьте inline-кнопки для поста.\nФормат: одна кнопка на строку в виде 'Текст кнопки | URL'.\nЕсли кнопок нет, введите /skip.")
+        fmt = "none"
+    await state.update_data(format=fmt)
+    await ask_buttons(message, state)
 
-@router.message(Command("skip"), CreatePost.buttons)
+async def ask_buttons(message: Message, state: FSMContext):
+    await state.set_state(CreatePost.buttons)
+    await message.answer(
+        "Шаг 4/7: кнопки.\n"
+        "Одна кнопка — одна строка: «Текст | URL».\n"
+        "Если не нужны — /skip."
+    , reply_markup=ReplyKeyboardRemove())
+
+# ---------- Шаг 4: кнопки ----------
+@router.message(CreatePost.buttons, Command("skip"))
 async def skip_buttons(message: Message, state: FSMContext):
     await state.update_data(buttons=[])
-    # Next: publish time
-    await state.set_state(CreatePost.time)
-    await message.answer("Шаг 5/7: Укажите дату и время публикации в формате YYYY-MM-DD HH:MM (24ч).")
+    await ask_time(message, state)
 
 @router.message(CreatePost.buttons)
-async def receive_buttons(message: Message, state: FSMContext):
-    text = message.text
-    text = text.strip()
-    if text.lower() in ("none", "нет"):
-        # interpret "none" as no buttons
-        await state.update_data(buttons=[])
-    else:
-        lines = text.splitlines()
-        buttons = []
-        for line in lines:
-            parts = line.split("|", maxsplit=1)
-            if len(parts) == 2:
-                btn_text = parts[0].strip()
-                btn_url = parts[1].strip()
-                if btn_text and btn_url:
-                    buttons.append({"text": btn_text, "url": btn_url})
-        await state.update_data(buttons=buttons)
-    # Next: time
-    await state.set_state(CreatePost.time)
-    await message.answer("Шаг 5/7: Укажите дату и время публикации в формате YYYY-MM-DD HH:MM (24ч).")
-
-@router.message(CreatePost.time)
-async def step_time(message: Message, state: FSMContext):
-    time_str = message.text.strip()
-    # Parse datetime
-    try:
-        publish_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-    except Exception:
-        await message.answer("Некорректный формат даты/времени. Пожалуйста, введите в формате YYYY-MM-DD HH:MM.")
-        return
-    # If parsed successfully
-    await state.update_data(publish_time=publish_time)
-    # Next: channel selection
-    await state.set_state(CreatePost.channel)
-    # Show available channels for selection
-    channels = supabase_db.db.list_channels()
-    # Build inline keyboard with channels
+async def got_buttons(message: Message, state: FSMContext):
     buttons = []
-    for ch in channels:
-        cid = ch.get("chat_id")
-        name = ch.get("name") or str(cid)
-        # Use chat_id as callback data
-        buttons.append([InlineKeyboardButton(text=name, callback_data=f"ch_select:{cid}")])
-    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await message.answer("Шаг 6/7: Выберите канал для публикации:", reply_markup=markup)
+    for line in message.text.splitlines():
+        if "|" in line:
+            t, u = [s.strip() for s in line.split("|", 1)]
+            if t and u:
+                buttons.append({"text": t, "url": u})
+    await state.update_data(buttons=buttons)
+    await ask_time(message, state)
 
-@router.callback_query(CreatePost.channel)
-async def channel_selected(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    if data and data.startswith("ch_select:"):
-        cid_str = data.split(":", 1)[1]
-        try:
-            chat_id = int(cid_str)
-        except:
-            chat_id = cid_str  # if for some reason it's not numeric (should be numeric though)
-        # Find channel internal ID as well
-        channels = supabase_db.db.list_channels()
-        channel_id = None
-        channel_name = str(chat_id)
-        for ch in channels:
-            if ch.get("chat_id") == chat_id:
-                channel_id = ch.get("id")
-                channel_name = ch.get("name") or channel_name
-                break
-        # Save chosen channel
-        # We store both the actual chat_id and the channel table id for reference
-        await state.update_data(channel_chat_id=chat_id, channel_db_id=channel_id, channel_name=channel_name)
-        # Move to confirmation
-        await state.set_state(CreatePost.confirm)
-        # Send a preview of the post
-        data = await state.get_data()
-        text = data.get("text", "")
-        media_id = data.get("media_id")
-        media_type = data.get("media_type")
-        fmt = data.get("format")
-        # Determine parse_mode from fmt
-        parse_mode = None
-        if fmt and fmt.lower() == "markdown":
-            parse_mode = "Markdown"
-        elif fmt and fmt.lower() == "html":
-            parse_mode = "HTML"
-        # Build inline keyboard for preview (if any)
-        markup = None
-        buttons = data.get("buttons", [])
-        if buttons:
-            kb = []
-            for btn in buttons:
-                btn_text = btn.get("text")
-                btn_url = btn.get("url")
-                if btn_text and btn_url:
-                    kb.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
-            if kb:
-                markup = InlineKeyboardMarkup(inline_keyboard=kb)
-        # Send preview to user
-        try:
-            if media_id and media_type:
-                if media_type == "photo":
-                    await callback.message.answer_photo(photo=media_id, caption=text or "", parse_mode=parse_mode, reply_markup=markup)
-                elif media_type == "video":
-                    await callback.message.answer_video(video=media_id, caption=text or "", parse_mode=parse_mode, reply_markup=markup)
-                else:
-                    await callback.message.answer(text or "(без текста)", parse_mode=parse_mode, reply_markup=markup)
-            else:
-                await callback.message.answer(text or "(без текста)", parse_mode=parse_mode, reply_markup=markup)
-        except Exception as e:
-            await callback.message.answer(f"Не удалось создать предпросмотр сообщения: {e}")
-        # Ask for confirmation
-        confirm_markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm"),
-             InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
-        ])
-        await callback.message.answer(f"Шаг 7/7: Подтвердите публикацию поста в канале \"{channel_name}\" в {data.get('publish_time')}.", reply_markup=confirm_markup)
-        await callback.answer()
-    else:
-        await callback.answer()
+async def ask_time(message: Message, state: FSMContext):
+    await state.set_state(CreatePost.time)
+    await message.answer("Шаг 5/7: дата-время YYYY-MM-DD HH:MM (24ч).")
 
-@router.callback_query(F.data == "confirm", CreatePost.confirm)
-async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
+# ---------- Шаг 5: время ----------
+@router.message(CreatePost.time)
+async def got_time(message: Message, state: FSMContext):
+    try:
+        dt = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await message.answer("Формат ошибочен, пример: 2025-05-28 15:30")
+        return
+    await state.update_data(publish_time=dt)
+    await ask_channel(message, state)
+
+async def ask_channel(message: Message, state: FSMContext):
+    await state.set_state(CreatePost.channel)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=ch["name"] or str(ch["chat_id"]),
+                                  callback_data=f"ch:{ch['chat_id']}")]
+            for ch in supabase_db.db.list_channels()
+        ]
+    )
+    await message.answer("Шаг 6/7: выберите канал:", reply_markup=kb)
+
+# ---------- Шаг 6: канал ----------
+@router.callback_query(CreatePost.channel, F.data.startswith("ch:"))
+async def channel_chosen(cb: types.CallbackQuery, state: FSMContext):
+    chat_id = int(cb.data.split(":", 1)[1])
+    ch = next((c for c in supabase_db.db.list_channels() if c["chat_id"] == chat_id), None)
+    await state.update_data(channel_chat_id=chat_id,
+                            channel_db_id=ch["id"] if ch else None,
+                            channel_name=ch["name"] or str(chat_id))
+    await cb.answer()
+    await show_preview(cb.message, state)
+
+async def show_preview(msg: Message, state: FSMContext):
     data = await state.get_data()
-    # Double-check: ensure post not already published or scheduled in past
-    publish_time = data.get("publish_time")
-    if publish_time and isinstance(publish_time, datetime):
-        now = datetime.utcnow()
-        if publish_time <= now:
-            # If the scheduled time is in the past or now, we can still schedule (it will post almost immediately)
-            pass
-    # Prepare post data for DB
-    post_data = {
-        "channel_id": data.get("channel_db_id"),        # reference to channels table
-        "chat_id": data.get("channel_chat_id"),         # actual Telegram chat id
-        "text": data.get("text", ""),
-        "media_id": data.get("media_id"),
-        "media_type": data.get("media_type"),
-        "format": data.get("format", "none"),
-        "buttons": data.get("buttons", []),
-        "publish_time": data.get("publish_time").strftime("%Y-%m-%dT%H:%M:%S"),
-        "published": False
-    }
-    # Insert into database
-    inserted = supabase_db.db.add_post(post_data)
-    if inserted:
-        post_id = inserted.get("id")
-        await callback.message.answer(f"Пост #{post_id} запланирован на публикацию.")
+    text = data["text"]
+    fmt  = data["format"]
+    pm   = {"markdown": "Markdown", "html": "HTML"}.get(fmt, None)
+    markup = None
+    if data["buttons"]:
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(d["text"], url=d["url"])] for d in data["buttons"]]
+        )
+    if data["media_id"] and data["media_type"] == "photo":
+        await msg.answer_photo(data["media_id"], caption=text or "", parse_mode=pm, reply_markup=markup)
+    elif data["media_id"] and data["media_type"] == "video":
+        await msg.answer_video(data["media_id"], caption=text or "", parse_mode=pm, reply_markup=markup)
     else:
-        await callback.message.answer("Ошибка при сохранении поста в базе данных.")
-    # End FSM
-    await state.clear()
-    # Acknowledge callback and edit the confirmation message to avoid duplicate actions
-    await callback.answer("Пост запланирован!")
-    try:
-        await callback.message.edit_text("Пост успешно запланирован ✅")
-    except:
-        pass
+        await msg.answer(text or "(без текста)", parse_mode=pm, reply_markup=markup)
 
-@router.callback_query(F.data == "cancel", CreatePost.confirm)
-async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Создание поста отменено.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("✅ Подтвердить", callback_data="ok"),
+         InlineKeyboardButton("❌ Отмена",     callback_data="no")]
+    ])
+    await msg.answer(f"Шаг 7/7: подтвердите публикацию в "
+                     f"«{data['channel_name']}» {data['publish_time']} UTC.",
+                     reply_markup=kb)
+    await state.set_state(CreatePost.confirm)
+
+# ---------- Шаг 7: подтверждение ----------
+@router.callback_query(CreatePost.confirm, F.data == "ok")
+async def confirm_ok(cb: types.CallbackQuery, state: FSMContext):
+    d = await state.get_data()
+    supabase_db.db.add_post({
+        "channel_id": d["channel_db_id"],
+        "chat_id": d["channel_chat_id"],
+        "text": d["text"],
+        "media_id": d["media_id"],
+        "media_type": d["media_type"],
+        "format": d["format"],
+        "buttons": json.dumps(d["buttons"]),
+        "publish_time": d["publish_time"].strftime("%Y-%m-%dT%H:%M:%S"),
+        "published": False
+    })
+    await cb.message.answer("Пост запланирован ✅")
     await state.clear()
-    await callback.answer("Отменено")
-    try:
-        await callback.message.edit_text("Создание поста отменено ❌")
-    except:
-        pass
+    await cb.answer()
+
+@router.callback_query(CreatePost.confirm, F.data == "no")
+async def confirm_no(cb: types.CallbackQuery, state: FSMContext):
+    await cb.message.answer("Отменено.")
+    await state.clear()
+    await cb.answer()
