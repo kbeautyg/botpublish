@@ -1,4 +1,5 @@
 from aiogram import Router, F, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -55,8 +56,15 @@ async def wrong_media(message: Message):
 async def ask_format(message: Message, state: FSMContext):
     await state.set_state(CreatePost.format)
     kb = ReplyKeyboardMarkup(
-        keyboard=[["Markdown", "HTML", "Без"]],
-        resize_keyboard=True, one_time_keyboard=True
+    keyboard=[
+        [
+            KeyboardButton(text="Markdown"),
+            KeyboardButton(text="HTML"),
+            KeyboardButton(text="Без"),
+        ]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True,
     )
     await message.answer("Шаг 3/7: формат Markdown / HTML / Без", reply_markup=kb)
 
