@@ -1,17 +1,17 @@
+# commands/help.py
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
+from storage import supabase_db
+from commands import TEXTS
 
 router = Router()
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    await message.answer(
-        "Команды:\n"
-        "/create – создать пост\n"
-        "/list – список отложенных\n"
-        "/edit <id> – редактировать\n"
-        "/delete <id> – удалить\n"
-        "/channels – управление каналами\n"
-        "/cancel – отменить ввод"
-    )
+    user_id = message.from_user.id
+    lang = "ru"
+    user = supabase_db.db.get_user(user_id)
+    if user:
+        lang = user.get("language", "ru")
+    await message.answer(TEXTS[lang]['help'])
