@@ -29,6 +29,9 @@ def parse_time(user: dict, text: str):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:mm")
     tz_name = user.get("timezone", "UTC")
+    # Adjust time format for correct parsing
+    if "MM" in time_fmt:
+        time_fmt = time_fmt.replace("MM", "mm")
     fmt = format_to_strptime(date_fmt, time_fmt)
     dt = datetime.strptime(text, fmt)
     try:
@@ -42,6 +45,8 @@ def parse_time(user: dict, text: str):
 def format_example(user: dict):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:mm")
+    if "MM" in time_fmt:
+        time_fmt = time_fmt.replace("MM", "mm")
     fmt = format_to_strptime(date_fmt, time_fmt)
     now = datetime.now()
     try:
@@ -82,17 +87,11 @@ async def edit_step_text(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
     text_input = message.text or ""
-    new_text = orig_post.get("text", "") if text_input.startswith("/skip") else text_input
+    new_text = orig_post.get("text", "") if text_input.strip().lower().startswith("/skip") else text_input
     await state.update_data(new_text=new_text)
     await state.set_state(EditPost.media)
     if orig_post.get("media_id"):
-        media_type = orig_post.get("media_type")
-        if media_type == "photo":
-            info = TEXTS['ru']['media_photo'] if data.get("user_settings", {}).get("language", "ru") == "ru" else TEXTS['en']['media_photo']
-        elif media_type == "video":
-            info = TEXTS['ru']['media_video'] if data.get("user_settings", {}).get("language", "ru") == "ru" else TEXTS['en']['media_video']
-        else:
-            info = TEXTS['ru']['media_media'] if data.get("user_settings", {}).get("language", "ru") == "ru" else TEXTS['en']['media_media']
+        info = TEXTS['ru']['media_photo'] if orig_post.get("media_type") == "photo" else TEXTS['ru']['media_video'] if orig_post.get("media_type") == "video" else TEXTS['ru']['media_media']
         lang = data.get("user_settings", {}).get("language", "ru")
         await message.answer(TEXTS[lang]['edit_current_media'].format(info=info))
     else:
@@ -103,138 +102,108 @@ async def edit_step_text(message: Message, state: FSMContext):
 async def skip_edit_media(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
-    await state.update_data(new_media_id=orig_post.get("media_id"), new_media_type=orig_post.get("media_type"))
-    await state.set_state(EditPost.format)
-    lang = data.get("user_settings", {}).get("language", "ru")
-    current_fmt = orig_post.get("format") or "none"
-    none_text = "Без" if lang == "ru" else "None"
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Markdown"), KeyboardButton(text="HTML"), KeyboardButton(text=none_text)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await message.answer(TEXTS[lang]['edit_current_format'].format(format=current_fmt), reply_markup=kb)
+    # Keep existing media (if any)
+    if orig_post.get("media_id"):
+        await state.update_data(new_media_id=orig_post.get("media_id"), new_media_type=orig_post.get("media_type"))
+    else:
+        await state.update_data(new_media_id=None, new_media_type=None)
+    await ask_edit_format(message, state)
 
 @router.message(EditPost.media, F.photo)
-async def edit_new_photo(message: Message, state: FSMContext):
+async def edit_step_media_photo(message: Message, state: FSMContext):
     await state.update_data(new_media_id=message.photo[-1].file_id, new_media_type="photo")
-    await state.set_state(EditPost.format)
-    data = await state.get_data()
-    orig_post = data.get("orig_post", {})
-    lang = data.get("user_settings", {}).get("language", "ru")
-    current_fmt = orig_post.get("format") or "none"
-    none_text = "Без" if lang == "ru" else "None"
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Markdown"), KeyboardButton(text="HTML"), KeyboardButton(text=none_text)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await message.answer(TEXTS[lang]['edit_current_format'].format(format=current_fmt), reply_markup=kb)
+    await ask_edit_format(message, state)
 
 @router.message(EditPost.media, F.video)
-async def edit_new_video(message: Message, state: FSMContext):
+async def edit_step_media_video(message: Message, state: FSMContext):
     await state.update_data(new_media_id=message.video.file_id, new_media_type="video")
-    await state.set_state(EditPost.format)
-    data = await state.get_data()
-    orig_post = data.get("orig_post", {})
-    lang = data.get("user_settings", {}).get("language", "ru")
-    current_fmt = orig_post.get("format") or "none"
-    none_text = "Без" if lang == "ru" else "None"
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Markdown"), KeyboardButton(text="HTML"), KeyboardButton(text=none_text)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await message.answer(TEXTS[lang]['edit_current_format'].format(format=current_fmt), reply_markup=kb)
+    await ask_edit_format(message, state)
 
 @router.message(EditPost.media)
-async def edit_invalid_media(message: Message, state: FSMContext):
+async def edit_step_media_invalid(message: Message, state: FSMContext):
     data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
-    if data.get("orig_post", {}).get("media_id"):
-        await message.answer(TEXTS[lang]['edit_current_media'].format(info=""))
-    else:
-        await message.answer(TEXTS[lang]['edit_no_media'])
+    await message.answer(TEXTS[lang]['edit_current_media'] if data.get("orig_post", {}).get("media_id") else TEXTS[lang]['edit_no_media'])
+
+async def ask_edit_format(message: Message, state: FSMContext):
+    await state.set_state(EditPost.format)
+    data = await state.get_data()
+    lang = data.get("user_settings", {}).get("language", "ru")
+    curr_fmt = data.get("orig_post", {}).get("format") or "none"
+    await message.answer(TEXTS[lang]['edit_current_format'].format(format=curr_fmt))
 
 @router.message(Command("skip"), EditPost.format)
 async def skip_edit_format(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
-    await state.update_data(new_format=orig_post.get("format") or "none")
-    await state.set_state(EditPost.buttons)
-    lang = data.get("user_settings", {}).get("language", "ru")
-    buttons_json = orig_post.get("buttons")
-    btn_list = []
-    if buttons_json:
-        try:
-            btn_list = supabase_db.json.loads(buttons_json)
-        except Exception:
-            btn_list = json.loads(buttons_json) if isinstance(buttons_json, str) else buttons_json
-    if btn_list:
-        lines = []
-        for btn in btn_list:
-            if isinstance(btn, dict):
-                lines.append(f"{btn.get('text')} -> {btn.get('url')}")
-            elif isinstance(btn, (list, tuple)) and len(btn) >= 2:
-                lines.append(f"{btn[0]} -> {btn[1]}")
-        buttons_list = "\n".join(lines)
-        await message.answer(TEXTS[lang]['edit_current_buttons'].format(buttons_list=buttons_list))
-    else:
-        await message.answer(TEXTS[lang]['edit_no_buttons'])
+    new_fmt = orig_post.get("format") or "none"
+    await state.update_data(new_format=new_fmt)
+    await ask_edit_buttons(message, state)
 
 @router.message(EditPost.format)
 async def edit_step_format(message: Message, state: FSMContext):
-    data = await state.get_data()
-    orig_post = data.get("orig_post", {})
     raw = (message.text or "").strip().lower()
-    new_fmt = orig_post.get("format") or "none" if raw.startswith("/skip") else ("markdown" if raw.startswith("markdown") else "html" if raw.startswith("html") else "none")
+    new_fmt = "markdown" if raw.startswith("markdown") else "html" if raw.startswith("html") else "none"
     await state.update_data(new_format=new_fmt)
+    await ask_edit_buttons(message, state)
+
+async def ask_edit_buttons(message: Message, state: FSMContext):
     await state.set_state(EditPost.buttons)
+    data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
-    buttons_json = orig_post.get("buttons")
-    btn_list = []
-    if buttons_json:
+    orig_post = data.get("orig_post", {})
+    if orig_post.get("buttons"):
+        # List current buttons
+        btns_list = ""
         try:
-            btn_list = supabase_db.json.loads(buttons_json)
+            current_buttons = json.loads(orig_post["buttons"]) if isinstance(orig_post["buttons"], str) else orig_post["buttons"]
         except Exception:
-            btn_list = json.loads(buttons_json) if isinstance(buttons_json, str) else buttons_json
-    if btn_list:
-        lines = []
-        for btn in btn_list:
+            current_buttons = orig_post["buttons"] or []
+        for btn in current_buttons:
             if isinstance(btn, dict):
-                lines.append(f"{btn.get('text')} -> {btn.get('url')}")
+                btns_list += f"- {btn.get('text')} | {btn.get('url')}\n"
             elif isinstance(btn, (list, tuple)) and len(btn) >= 2:
-                lines.append(f"{btn[0]} -> {btn[1]}")
-        buttons_list = "\n".join(lines)
-        await message.answer(TEXTS[lang]['edit_current_buttons'].format(buttons_list=buttons_list))
+                btns_list += f"- {btn[0]} | {btn[1]}\n"
+        await message.answer(TEXTS[lang]['edit_current_buttons'].format(buttons_list=btns_list.strip()))
     else:
         await message.answer(TEXTS[lang]['edit_no_buttons'])
 
-@router.message(EditPost.buttons)
-async def edit_step_buttons(message: Message, state: FSMContext):
+@router.message(Command("skip"), EditPost.buttons)
+async def skip_edit_buttons(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
-    text = message.text.strip()
-    if text.lower() in ("none", "нет"):
+    new_buttons = orig_post.get("buttons") or []
+    await state.update_data(new_buttons=new_buttons)
+    await ask_edit_time(message, state)
+
+@router.message(EditPost.buttons)
+async def edit_step_buttons(message: Message, state: FSMContext):
+    text = message.text or ""
+    if text.strip().lower() == "нет" or text.strip().lower() == "none":
         new_buttons = []
-    elif text.startswith("/skip"):
+    elif text.strip().lower().startswith("/skip"):
         new_buttons = orig_post.get("buttons") or []
     else:
         buttons = []
         for line in text.splitlines():
-            parts = line.split("|", maxsplit=1)
-            if len(parts) == 2:
+            if "|" in line:
+                parts = line.split("|", 1)
                 btn_text = parts[0].strip(); btn_url = parts[1].strip()
                 if btn_text and btn_url:
                     buttons.append({"text": btn_text, "url": btn_url})
         new_buttons = buttons
     await state.update_data(new_buttons=new_buttons)
+    await ask_edit_time(message, state)
+
+async def ask_edit_time(message: Message, state: FSMContext):
     await state.set_state(EditPost.time)
+    data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
+    orig_post = data.get("orig_post", {})
     orig_time = orig_post.get("publish_time")
     current_time_str = "(черновик)" if (not orig_time) and lang == "ru" else "(draft)" if (not orig_time) else str(orig_time)
     fmt_str = f"{data.get('user_settings', {}).get('date_format', 'YYYY-MM-DD')} {data.get('user_settings', {}).get('time_format', 'HH:MM')}"
-    example = format_example(data.get('user_settings', {}))
+    example = format_example(data.get("user_settings", {}))
     await message.answer(TEXTS[lang]['edit_current_time'].format(time=current_time_str, format=fmt_str, example=example))
 
 @router.message(Command("skip"), EditPost.time)
@@ -242,18 +211,9 @@ async def skip_edit_time(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
     await state.update_data(new_publish_time=orig_post.get("publish_time"))
-    await state.set_state(EditPost.repeat)
-    lang = data.get("user_settings", {}).get("language", "ru")
-    orig_interval = orig_post.get("repeat_interval", 0)
-    if not orig_interval or orig_interval == 0:
-        curr_repeat = "0"
-    elif orig_interval % 86400 == 0:
-        days = orig_interval // 86400; curr_repeat = f"{days}d"
-    elif orig_interval % 3600 == 0:
-        hours = orig_interval // 3600; curr_repeat = f"{hours}h"
-    else:
-        minutes = orig_interval // 60; curr_repeat = f"{minutes}m"
-    await message.answer(TEXTS[lang]['edit_current_repeat'].format(repeat=curr_repeat))
+    # Keep original repeat interval and move to next step
+    await state.update_data(new_repeat_interval=orig_post.get("repeat_interval", 0))
+    await ask_edit_repeat(message, state)
 
 @router.message(EditPost.time)
 async def edit_step_time(message: Message, state: FSMContext):
@@ -271,18 +231,34 @@ async def edit_step_time(message: Message, state: FSMContext):
             example = format_example(user)
             await message.answer(TEXTS[lang]['edit_time_error'].format(format=fmt, example=example))
             return
+        # Prevent scheduling in the past
+        if new_time <= datetime.now(ZoneInfo("UTC")):
+            await message.answer(TEXTS[lang]['time_past_error'])
+            return
     await state.update_data(new_publish_time=new_time)
+    # Carry over original repeat interval if unscheduled, otherwise use original until changed
+    orig_post = data.get("orig_post", {})
+    await state.update_data(new_repeat_interval=orig_post.get("repeat_interval", 0))
+    await ask_edit_repeat(message, state)
+
+async def ask_edit_repeat(message: Message, state: FSMContext):
+    # After time step, proceed to repeat (or directly to channel if skipped time)
     await state.set_state(EditPost.repeat)
+    data = await state.get_data()
+    lang = data.get("user_settings", {}).get("language", "ru")
     orig_post = data.get("orig_post", {})
     orig_interval = orig_post.get("repeat_interval", 0)
-    if not orig_interval or orig_interval == 0:
-        curr_repeat = "0"
-    elif orig_interval % 86400 == 0:
-        days = orig_interval // 86400; curr_repeat = f"{days}d"
-    elif orig_interval % 3600 == 0:
-        hours = orig_interval // 3600; curr_repeat = f"{hours}h"
-    else:
-        minutes = orig_interval // 60; curr_repeat = f"{minutes}m"
+    curr_repeat = "0"
+    if orig_interval:
+        if orig_interval % 86400 == 0:
+            days = orig_interval // 86400
+            curr_repeat = f"{days}d"
+        elif orig_interval % 3600 == 0:
+            hours = orig_interval // 3600
+            curr_repeat = f"{hours}h"
+        else:
+            minutes = orig_interval // 60
+            curr_repeat = f"{minutes}m"
     await message.answer(TEXTS[lang]['edit_current_repeat'].format(repeat=curr_repeat))
 
 @router.message(Command("skip"), EditPost.repeat)
@@ -290,27 +266,7 @@ async def skip_edit_repeat(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
     await state.update_data(new_repeat_interval=orig_post.get("repeat_interval", 0))
-    await state.set_state(EditPost.channel)
-    lang = data.get("user_settings", {}).get("language", "ru")
-    channels = supabase_db.db.list_channels(user_id=message.from_user.id)
-    current_channel = None
-    current_channel_name = "unknown"
-    if orig_post:
-        chan_id = orig_post.get("channel_id"); chat_id = orig_post.get("chat_id")
-        for ch in channels:
-            if chan_id and ch.get("id") == chan_id:
-                current_channel = ch; break
-            if chat_id and ch.get("chat_id") == chat_id:
-                current_channel = ch; break
-    if current_channel:
-        current_channel_name = current_channel.get("name") or str(current_channel.get("chat_id"))
-    prompt_text = (f"Текущий канал: {current_channel_name}\nВыберите новый канал или нажмите 'Оставить текущий':"
-                   if lang == "ru" else
-                   f"Current channel: {current_channel_name}\nChoose a new channel or press 'Keep current':")
-    btns = [[InlineKeyboardButton(text=ch.get("name") or str(ch.get("chat_id")), callback_data=f"ch_edit:{ch.get('chat_id')}")] for ch in channels]
-    btns.append([InlineKeyboardButton(text=TEXTS[lang]['edit_keep_current_channel'], callback_data="ch_edit_skip")])
-    markup = InlineKeyboardMarkup(inline_keyboard=btns)
-    await message.answer(prompt_text, reply_markup=markup)
+    await ask_edit_channel(message, state)
 
 @router.message(EditPost.repeat)
 async def edit_step_repeat(message: Message, state: FSMContext):
@@ -339,75 +295,93 @@ async def edit_step_repeat(message: Message, state: FSMContext):
         else:
             interval = 0
     await state.update_data(new_repeat_interval=interval if interval is not None else 0)
+    await ask_edit_channel(message, state)
+
+async def ask_edit_channel(message: Message, state: FSMContext):
     await state.set_state(EditPost.channel)
+    data = await state.get_data()
     orig_post = data.get("orig_post", {})
+    lang = data.get("user_settings", {}).get("language", "ru")
     channels = supabase_db.db.list_channels(user_id=message.from_user.id)
-    current_channel = None
-    current_channel_name = "unknown"
+    if not channels:
+        await message.answer(TEXTS[lang]['channels_no_channels'])
+        return
+    current_channel_name = "(unknown)"
     if orig_post:
         chan_id = orig_post.get("channel_id"); chat_id = orig_post.get("chat_id")
         for ch in channels:
             if chan_id and ch.get("id") == chan_id:
-                current_channel = ch; break
+                current_channel_name = ch.get("name") or str(ch.get("chat_id"))
+                break
             if chat_id and ch.get("chat_id") == chat_id:
-                current_channel = ch; break
-    if current_channel:
-        current_channel_name = current_channel.get("name") or str(current_channel.get("chat_id"))
-    prompt_text = (f"Текущий канал: {current_channel_name}\nВыберите новый канал или нажмите 'Оставить текущий':"
-                   if lang == "ru" else
-                   f"Current channel: {current_channel_name}\nChoose a new channel or press 'Keep current':")
-    btns = [[InlineKeyboardButton(text=ch.get("name") or str(ch.get("chat_id")), callback_data=f"ch_edit:{ch.get('chat_id')}")] for ch in channels]
-    btns.append([InlineKeyboardButton(text=TEXTS[lang]['edit_keep_current_channel'], callback_data="ch_edit_skip")])
-    markup = InlineKeyboardMarkup(inline_keyboard=btns)
-    await message.answer(prompt_text, reply_markup=markup)
-
-@router.callback_query(EditPost.channel)
-async def edit_channel_select(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    orig_post = data.get("orig_post", {})
-    cb_data = callback.data
-    if cb_data == "ch_edit_skip":
-        new_channel_id = orig_post.get("channel_id")
-        new_chat_id = orig_post.get("chat_id")
-        new_channel_name = None
-        channels = supabase_db.db.list_channels(user_id=callback.from_user.id)
-        for ch in channels:
-            if ch.get("id") == new_channel_id or ch.get("chat_id") == new_chat_id:
-                new_channel_name = ch.get("name") or str(ch.get("chat_id"))
+                current_channel_name = ch.get("name") or str(ch.get("chat_id"))
                 break
-        await state.update_data(new_channel_db_id=new_channel_id, new_channel_chat_id=new_chat_id, new_channel_name=new_channel_name)
-    elif cb_data.startswith("ch_edit:"):
-        cid_str = cb_data.split(":", 1)[1]
-        try:
-            chat_id = int(cid_str)
-        except:
-            chat_id = cid_str
-        channel_id = None
-        channel_name = str(chat_id)
-        channels = supabase_db.db.list_channels(user_id=callback.from_user.id)
-        for ch in channels:
-            if ch.get("chat_id") == chat_id:
-                channel_id = ch.get("id")
-                channel_name = ch.get("name") or channel_name
-                break
-        await state.update_data(new_channel_db_id=channel_id, new_channel_chat_id=chat_id, new_channel_name=channel_name)
+    # Prompt channel selection with current channel info
+    if lang == "ru":
+        lines = [f"Текущий канал: {current_channel_name}", "Выберите новый канал или отправьте /skip, чтобы оставить текущий:"]
     else:
-        await callback.answer()
-        return
-    await state.set_state(EditPost.confirm)
+        lines = [f"Current channel: {current_channel_name}", "Choose a new channel or send /skip to keep the current one:"]
+    for i, ch in enumerate(channels, start=1):
+        name = ch.get("name") or str(ch.get("chat_id"))
+        lines.append(f"{i}. {name}")
+    await state.update_data(_chan_map=channels)
+    await message.answer("\n".join(lines))
+
+@router.message(EditPost.channel, Command("skip"))
+async def skip_edit_channel(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
+    # Keep current channel as is
+    new_channel_id = orig_post.get("channel_id")
+    new_chat_id = orig_post.get("chat_id")
+    new_channel_name = None
+    channels = supabase_db.db.list_channels(user_id=message.from_user.id)
+    for ch in channels:
+        if ch.get("id") == new_channel_id or ch.get("chat_id") == new_chat_id:
+            new_channel_name = ch.get("name") or str(ch.get("chat_id"))
+            break
+    await state.update_data(new_channel_db_id=new_channel_id, new_channel_chat_id=new_chat_id, new_channel_name=new_channel_name)
+    await show_edit_preview(message, state)
+
+@router.message(EditPost.channel)
+async def choose_edit_channel(message: Message, state: FSMContext):
+    data = await state.get_data()
+    channels = data.get("_chan_map", [])
+    raw = (message.text or "").strip()
+    chosen = None
+    if raw.isdigit():
+        idx = int(raw)
+        if 1 <= idx <= len(channels):
+            chosen = channels[idx - 1]
+    else:
+        for ch in channels:
+            if str(ch["chat_id"]) == raw or (ch["name"] and ("@" + ch["name"]) == raw):
+                chosen = ch
+                break
+    if not chosen:
+        lang = data.get("user_settings", {}).get("language", "ru")
+        await message.answer(TEXTS[lang]['edit_channel_error'] if 'edit_channel_error' in TEXTS[lang] else TEXTS[lang]['edit_post_not_found'])
+        return
+    await state.update_data(new_channel_db_id=chosen.get("id"), new_channel_chat_id=chosen.get("chat_id"), new_channel_name=chosen.get("name") or str(chosen.get("chat_id")))
+    await show_edit_preview(message, state)
+
+async def show_edit_preview(message: Message, state: FSMContext):
+    data = await state.get_data()
+    orig_post = data.get("orig_post", {})
+    user = data.get("user_settings", {}) or {}
+    lang = user.get("language", "ru")
     text = data.get("new_text", orig_post.get("text", "")) or ""
     media_id = data.get("new_media_id", orig_post.get("media_id"))
     media_type = data.get("new_media_type", orig_post.get("media_type"))
     fmt = data.get("new_format", orig_post.get("format") or "none")
     buttons = data.get("new_buttons", orig_post.get("buttons") or [])
+    # Prepare markup for buttons
     btn_list = []
     if isinstance(buttons, str):
         try:
-            btn_list = supabase_db.json.loads(buttons)
-        except Exception:
             btn_list = json.loads(buttons) if buttons else []
+        except Exception:
+            btn_list = []
     elif isinstance(buttons, list):
         btn_list = buttons
     markup = None
@@ -431,36 +405,33 @@ async def edit_channel_select(callback: types.CallbackQuery, state: FSMContext):
         parse_mode = "HTML"
     try:
         if media_id and media_type:
-            if media_type == "photo":
-                await callback.message.answer_photo(photo=media_id, caption=text or TEXTS['ru']['no_text'], parse_mode=parse_mode, reply_markup=markup)
-            elif media_type == "video":
-                await callback.message.answer_video(video=media_id, caption=text or TEXTS['ru']['no_text'], parse_mode=parse_mode, reply_markup=markup)
+            if media_type.lower() == "photo":
+                await message.answer_photo(media_id, caption=text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
+            elif media_type.lower() == "video":
+                await message.answer_video(media_id, caption=text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
             else:
-                await callback.message.answer(text or TEXTS['ru']['no_text'], parse_mode=parse_mode, reply_markup=markup)
+                await message.answer(text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
         else:
-            await callback.message.answer(text or TEXTS['ru']['no_text'], parse_mode=parse_mode, reply_markup=markup)
+            await message.answer(text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
     except Exception as e:
-        await callback.message.answer(f"Предпросмотр сообщения недоступен: {e}")
-    confirm_markup = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Сохранить изменения" if data.get("user_settings", {}).get("language", "ru") == "ru" else "✅ Save changes", callback_data="edit_confirm"),
-        InlineKeyboardButton(text="❌ Отмена" if data.get("user_settings", {}).get("language", "ru") == "ru" else "❌ Cancel", callback_data="edit_cancel")
-    ]])
-    lang = data.get("user_settings", {}).get("language", "ru")
-    confirm_prompt = "Подтвердите изменение поста." if lang == "ru" else "Please confirm the changes."
-    await callback.message.answer(confirm_prompt, reply_markup=confirm_markup)
-    await callback.answer()
+        await message.answer(f"Предпросмотр сообщения недоступен: {e}")
+    confirm_msg = ("Подтвердите изменение поста. Отправьте /confirm для сохранения или /cancel для отмены."
+                   if lang == "ru" else
+                   "Please confirm the changes. Send /confirm to save or /cancel to cancel.")
+    await message.answer(confirm_msg)
+    await state.set_state(EditPost.confirm)
 
-@router.callback_query(F.data == "edit_confirm", EditPost.confirm)
-async def confirm_edit(callback: types.CallbackQuery, state: FSMContext):
+@router.message(EditPost.confirm, Command("confirm"))
+async def confirm_edit_command(message: Message, state: FSMContext):
     data = await state.get_data()
     orig_post = data.get("orig_post", {})
     post_id = orig_post.get("id")
+    # Check if post got published in the meantime
     latest = supabase_db.db.get_post(post_id)
     if latest and latest.get("published"):
         lang = data.get("user_settings", {}).get("language", "ru")
-        await callback.message.answer(TEXTS[lang]['edit_post_published'])
+        await message.answer(TEXTS[lang]['edit_post_published'])
         await state.clear()
-        await callback.answer("Cancelled")
         return
     updates = {}
     if "new_text" in data:
@@ -488,24 +459,5 @@ async def confirm_edit(callback: types.CallbackQuery, state: FSMContext):
         updates["repeat_interval"] = data["new_repeat_interval"]
     supabase_db.db.update_post(post_id, updates)
     lang = data.get("user_settings", {}).get("language", "ru")
-    await callback.message.answer(TEXTS[lang]['confirm_changes_saved'].format(id=post_id))
+    await message.answer(TEXTS[lang]['confirm_changes_saved'].format(id=post_id))
     await state.clear()
-    await callback.answer("Обновлено" if lang == "ru" else "Updated")
-    try:
-        await callback.message.edit_text(TEXTS[lang]['edit_saved_notify'])
-    except:
-        pass
-
-@router.callback_query(F.data == "edit_cancel", EditPost.confirm)
-async def cancel_edit(callback: types.CallbackQuery, state: FSMContext):
-    lang = "ru"
-    data = await state.get_data()
-    if data.get("user_settings"):
-        lang = data["user_settings"].get("language", "ru")
-    await callback.message.answer(TEXTS[lang]['edit_cancelled'])
-    await state.clear()
-    await callback.answer("Отменено" if lang == "ru" else "Cancelled")
-    try:
-        await callback.message.edit_text(TEXTS[lang]['edit_cancel_notify'])
-    except:
-        pass
