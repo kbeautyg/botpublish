@@ -1,4 +1,5 @@
 import json
+import re
 from aiogram import Router, types, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from aiogram.filters import Command
@@ -11,18 +12,18 @@ from commands import TEXTS
 
 router = Router()
 
-def format_to_strptime(date_fmt: str, time_fmt: str):
-    fmt = date_fmt.replace("YYYY", "%Y").replace("YY", "%y")
-    fmt = fmt.replace("MM", "%m").replace("DD", "%d")
-    t_fmt = time_fmt
-    t_fmt = t_fmt.replace("HH", "%H").replace("H", "%H")
-    if "hh" in t_fmt or "AM" in t_fmt or "PM" in t_fmt or "am" in t_fmt or "pm" in t_fmt:
-        t_fmt = t_fmt.replace("hh", "%I").replace("HH", "%I")
-        t_fmt = t_fmt.replace("AM", "%p").replace("PM", "%p").replace("am", "%p").replace("pm", "%p")
-    else:
-        t_fmt = t_fmt.replace("MM", "%M").replace("M", "%M")
-        t_fmt = t_fmt.replace("SS", "%S").replace("S", "%S")
-    return fmt + " " + t_fmt
+TOKEN_MAP = {
+    "YYYY": "%Y", "YY": "%y",
+    "MM": "%m",   "DD": "%d",
+    "HH": "%H",   "hh": "%I",
+    "mm": "%M",   "SS": "%S",
+    "AM": "%p",   "PM": "%p",
+    "am": "%p",   "pm": "%p",
+}
+_rx = re.compile("|".join(sorted(TOKEN_MAP, key=len, reverse=True)))
+
+def format_to_strptime(date_fmt: str, time_fmt: str) -> str:
+    return _rx.sub(lambda m: TOKEN_MAP[m.group(0)], f"{date_fmt} {time_fmt}")
 
 def parse_time(user: dict, text: str):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
@@ -233,7 +234,8 @@ async def edit_step_buttons(message: Message, state: FSMContext):
     orig_time = orig_post.get("publish_time")
     current_time_str = "(черновик)" if (not orig_time) and lang == "ru" else "(draft)" if (not orig_time) else str(orig_time)
     fmt_str = f"{data.get('user_settings', {}).get('date_format', 'YYYY-MM-DD')} {data.get('user_settings', {}).get('time_format', 'HH:MM')}"
-    await message.answer(TEXTS[lang]['edit_current_time'].format(time=current_time_str, format=fmt_str))
+    example = format_example(data.get('user_settings', {}))
+    await message.answer(TEXTS[lang]['edit_current_time'].format(time=current_time_str, format=fmt_str, example=example))
 
 @router.message(Command("skip"), EditPost.time)
 async def skip_edit_time(message: Message, state: FSMContext):
@@ -265,9 +267,9 @@ async def edit_step_time(message: Message, state: FSMContext):
         try:
             new_time = parse_time(user, time_str)
         except Exception:
-            await message.answer(TEXTS[lang]['edit_time_error'].format(format=f"{user.get('date_format', 'YYYY-MM-DD')} {user.get('time_format', 'HH:MM')}"))
+            fmt = f"{user.get('date_format', 'YYYY-MM-DD')} {user.get('time_format', 'HH:MM')}"
             example = format_example(user)
-            await message.answer("(" + example + ")")
+            await message.answer(TEXTS[lang]['edit_time_error'].format(format=fmt, example=example))
             return
     await state.update_data(new_publish_time=new_time)
     await state.set_state(EditPost.repeat)
@@ -401,7 +403,6 @@ async def edit_channel_select(callback: types.CallbackQuery, state: FSMContext):
     fmt = data.get("new_format", orig_post.get("format") or "none")
     buttons = data.get("new_buttons", orig_post.get("buttons") or [])
     btn_list = []
-    import json
     if isinstance(buttons, str):
         try:
             btn_list = supabase_db.json.loads(buttons)
