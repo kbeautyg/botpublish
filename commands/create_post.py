@@ -26,7 +26,7 @@ def format_to_strptime(date_fmt: str, time_fmt: str) -> str:
 
 def parse_time(user: dict, text: str):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
-    time_fmt = user.get("time_format", "HH:MM")
+    time_fmt = user.get("time_format", "HH:mm")
     tz_name = user.get("timezone", "UTC")
     fmt = format_to_strptime(date_fmt, time_fmt)
     dt = datetime.strptime(text, fmt)
@@ -40,7 +40,7 @@ def parse_time(user: dict, text: str):
 
 def format_example(user: dict):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
-    time_fmt = user.get("time_format", "HH:MM")
+    time_fmt = user.get("time_format", "HH:mm")
     fmt = format_to_strptime(date_fmt, time_fmt)
     now = datetime.now()
     try:
