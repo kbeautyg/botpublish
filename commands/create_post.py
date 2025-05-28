@@ -1,5 +1,3 @@
-# commands/create_post.py
-import re 
 from aiogram import Router, types, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from aiogram.filters import Command
@@ -9,25 +7,24 @@ from zoneinfo import ZoneInfo
 from states import CreatePost
 from storage import supabase_db
 from commands import TEXTS
+import re
 
 router = Router()
 
-def format_to_strptime(date_fmt: str, time_fmt: str):
-    """Convert user date/time format to strptime pattern."""
-    fmt = date_fmt.replace("YYYY", "%Y").replace("YY", "%y")
-    fmt = fmt.replace("MM", "%m").replace("DD", "%d")
-    t_fmt = time_fmt
-    t_fmt = t_fmt.replace("HH", "%H").replace("H", "%H")
-    if "hh" in t_fmt or "AM" in t_fmt or "PM" in t_fmt or "am" in t_fmt or "pm" in t_fmt:
-        t_fmt = t_fmt.replace("hh", "%I").replace("HH", "%I")
-        t_fmt = t_fmt.replace("AM", "%p").replace("PM", "%p").replace("am", "%p").replace("pm", "%p")
-    else:
-        t_fmt = t_fmt.replace("MM", "%M").replace("M", "%M")
-        t_fmt = t_fmt.replace("SS", "%S").replace("S", "%S")
-    return fmt + " " + t_fmt
+TOKEN_MAP = {
+    "YYYY": "%Y", "YY": "%y",
+    "MM": "%m",   "DD": "%d",
+    "HH": "%H",   "hh": "%I",
+    "mm": "%M",   "SS": "%S",
+    "AM": "%p",   "PM": "%p",
+    "am": "%p",   "pm": "%p",
+}
+_rx = re.compile("|".join(sorted(TOKEN_MAP, key=len, reverse=True)))
+
+def format_to_strptime(date_fmt: str, time_fmt: str) -> str:
+    return _rx.sub(lambda m: TOKEN_MAP[m.group(0)], f"{date_fmt} {time_fmt}")
 
 def parse_time(user: dict, text: str):
-    """Parse a datetime string (user's local) to UTC datetime."""
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:MM")
     tz_name = user.get("timezone", "UTC")
@@ -42,7 +39,6 @@ def parse_time(user: dict, text: str):
     return utc_dt
 
 def format_example(user: dict):
-    """Generate an example datetime string in user's format."""
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:MM")
     fmt = format_to_strptime(date_fmt, time_fmt)
@@ -51,6 +47,8 @@ def format_example(user: dict):
         return now.strftime(fmt)
     except Exception:
         return now.strftime("%Y-%m-%d %H:%M")
+
+router = Router()
 
 @router.message(Command("create"))
 async def cmd_create(message: Message, state: FSMContext):
@@ -160,7 +158,8 @@ async def ask_time(message: Message, state: FSMContext):
     user = data.get("user_settings", {})
     lang = user.get("language", "ru")
     fmt = f"{user.get('date_format', 'YYYY-MM-DD')} {user.get('time_format', 'HH:MM')}"
-    await message.answer(TEXTS[lang]['create_step5'].format(format=fmt))
+    example = format_example(user)
+    await message.answer(TEXTS[lang]['create_step5'].format(format=fmt, example=example))
 
 @router.message(CreatePost.time, Command("skip"))
 async def skip_time(message: Message, state: FSMContext):
