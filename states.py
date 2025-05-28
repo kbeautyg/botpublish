@@ -7,6 +7,7 @@ class CreatePost(StatesGroup):
     format = State()
     buttons = State()
     time = State()
+    repeat = State()
     channel = State()
     confirm = State()
 
@@ -16,5 +17,6 @@ class EditPost(StatesGroup):
     format = State()
     buttons = State()
     time = State()
+    repeat = State()
     channel = State()
     confirm = State()
