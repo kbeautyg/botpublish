@@ -1,14 +1,12 @@
-# commands/__init__.py
-"""
-Command handlers package (multi-language support via TEXTS).
-"""
 TEXTS = {
     'ru': {
         'start_welcome': "Привет! Я бот для отложенного постинга.\nИспользуйте /help для списка команд.",
         'help': ("Команды:\n"
                  "/create – создать пост\n"
                  "/list – список отложенных постов\n"
+                 "/view <ID> – просмотреть пост\n"
                  "/edit <ID> – редактировать пост\n"
+                 "/reschedule <ID> <дата/время> – перенести время публикации\n"
                  "/delete <ID> – удалить пост\n"
                  "/channels – управление каналами\n"
                  "/settings – настройки пользователя\n"
@@ -33,6 +31,7 @@ TEXTS = {
                          "Если кнопки не нужны – отправьте /skip."),
         'create_step5': "Шаг 5/8: отправьте дату и время публикации в формате {format}.",
         'create_time_error': "Неверный формат. Пример: {example}.",
+        'time_past_error': "Указанное время уже прошло. Пожалуйста, укажите время в будущем.",
         'create_step6': ("Шаг 6/8: интервал повторения поста.\n"
                          "Напр.: 1d (ежедневно), 7d (еженедельно), 12h (каждые 12 часов), 0 или /skip – без повтора."),
         'create_repeat_error': "Неверный формат интервала. Примеры: 0, 1d, 12h, 30m.",
@@ -41,6 +40,9 @@ TEXTS = {
         'confirm_post_scheduled': "Пост запланирован ✅",
         'confirm_post_draft': "Черновик сохранён ✅",
         'confirm_post_cancel': "Отменено.",
+        'view_usage': "Использование: /view <ID поста>",
+        'view_invalid_id': "Некорректный ID поста.",
+        'view_not_found': "Пост с таким ID не найден.",
         'edit_usage': "Использование: /edit <ID поста>",
         'edit_invalid_id': "Некорректный ID поста.",
         'edit_post_not_found': "Пост с таким ID не найден.",
@@ -55,12 +57,17 @@ TEXTS = {
         'edit_time_error': "Неверный формат. Введите в формате {format} или /skip.",
         'edit_current_repeat': "Текущий интервал повтора: {repeat}\nВведите новый интервал (0 – без повтора) или /skip для сохранения.",
         'edit_repeat_error': "Неверный формат интервала. Примеры: 0, 1d, 12h, 30m.",
-        'edit_choose_channel': "Выберите новый канал для поста (или нажмите 'Оставить текущий'):",
+        'edit_choose_channel': "Выберите новый канал для поста (или отправьте /skip, чтобы оставить текущий):",
         'edit_keep_current_channel': "Оставить текущий",
         'confirm_changes_saved': "Изменения сохранены для поста #{id}.",
         'edit_cancelled': "Редактирование поста отменено.",
         'edit_saved_notify': "Пост отредактирован ✅",
         'edit_cancel_notify': "Редактирование отменено ❌",
+        'reschedule_usage': "Использование: /reschedule <ID поста> <дата и время>",
+        'reschedule_invalid_id': "Некорректный ID поста.",
+        'reschedule_not_found': "Пост с таким ID не найден.",
+        'reschedule_post_published': "Этот пост уже был опубликован, его нельзя перенести.",
+        'reschedule_success': "Пост #{id} перенесён.",
         'no_posts': "Нет запланированных постов.",
         'scheduled_posts_title': "Запланированные посты:",
         'delete_usage': "Использование: /delete <ID поста>",
@@ -105,7 +112,9 @@ TEXTS = {
         'help': ("Commands:\n"
                  "/create – create a post\n"
                  "/list – list scheduled posts\n"
+                 "/view <ID> – view a post\n"
                  "/edit <ID> – edit a post\n"
+                 "/reschedule <ID> <datetime> – reschedule a post\n"
                  "/delete <ID> – delete a post\n"
                  "/channels – manage channels\n"
                  "/settings – user settings\n"
@@ -130,6 +139,7 @@ TEXTS = {
                          "If no buttons needed, send /skip."),
         'create_step5': "Step 5/8: send the date/time in format {format}.",
         'create_time_error': "Invalid format. Example: {example}.",
+        'time_past_error': "The specified time is in the past. Please provide a future time.",
         'create_step6': ("Step 6/8: set repeat interval.\n"
                          "E.g. 1d (daily), 7d (weekly), 12h (every 12 hours), 0 or /skip for no repeat."),
         'create_repeat_error': "Invalid interval format. Examples: 0, 1d, 12h, 30m.",
@@ -138,6 +148,9 @@ TEXTS = {
         'confirm_post_scheduled': "Post scheduled ✅",
         'confirm_post_draft': "Draft saved ✅",
         'confirm_post_cancel': "Cancelled.",
+        'view_usage': "Usage: /view <post ID>",
+        'view_invalid_id': "Invalid post ID.",
+        'view_not_found': "Post not found.",
         'edit_usage': "Usage: /edit <post ID>",
         'edit_invalid_id': "Invalid post ID.",
         'edit_post_not_found': "Post not found.",
@@ -152,12 +165,17 @@ TEXTS = {
         'edit_time_error': "Invalid format. Use {format} or /skip.",
         'edit_current_repeat': "Current repeat interval: {repeat}\nEnter a new interval (0 for none) or /skip to keep.",
         'edit_repeat_error': "Invalid interval format. Examples: 0, 1d, 12h, 30m.",
-        'edit_choose_channel': "Choose a new channel for the post (or press 'Keep current'):",
+        'edit_choose_channel': "Choose a new channel for the post (or send /skip to keep the current one):",
         'edit_keep_current_channel': "Keep current",
         'confirm_changes_saved': "Changes saved for post #{id}.",
         'edit_cancelled': "Post editing cancelled.",
         'edit_saved_notify': "Post edited ✅",
         'edit_cancel_notify': "Edit cancelled ❌",
+        'reschedule_usage': "Usage: /reschedule <post ID> <datetime>",
+        'reschedule_invalid_id': "Invalid post ID.",
+        'reschedule_not_found': "Post not found.",
+        'reschedule_post_published': "This post has already been published and cannot be rescheduled.",
+        'reschedule_success': "Post #{id} rescheduled.",
         'no_posts': "No scheduled posts.",
         'scheduled_posts_title': "Scheduled posts:",
         'delete_usage': "Usage: /delete <post ID>",
