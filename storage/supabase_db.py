@@ -156,7 +156,8 @@ class SupabaseDB:
             query = query.eq("published", False)
         if user_id is not None:
             query = query.eq("user_id", user_id)
-        query = query.order("publish_time", asc=True)
+        # supabase-py ≥ 2.x ⇒ .order(..., desc=bool), «asc» нет
+        query = query.order("publish_time", desc=False)   #  ← was asc=True
         res = query.execute()
         return res.data or []
 
