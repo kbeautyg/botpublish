@@ -10,105 +10,138 @@ class SupabaseDB:
         self.client: Client = create_client(url, key)
     
     def init_schema(self):
-        """Ensure the necessary tables exist (if possible)."""
+        """Ensure the necessary tables exist (or create them if possible)."""
         try:
-            # Check if tables exist by attempting a simple query
-            res = self.client.table("channels").select("id").limit(1).execute()
-            res2 = self.client.table("posts").select("id").limit(1).execute()
-        except Exception as e:
-            # If an error occurred, you may create tables via SQL if using service role key.
-            # (This requires a service key; if using anon key, ensure tables are created manually.)
+            # Check if tables exist by querying a small portion
+            self.client.table("channels").select("id").limit(1).execute()
+            self.client.table("posts").select("id").limit(1).execute()
+            self.client.table("users").select("user_id").limit(1).execute()
+        except Exception:
+            # Attempt to create missing tables and columns via SQL (if allowed)
             try:
-                # Attempt to create tables using an RPC or direct SQL (if allowed)
-                self.client.postgrest.rpc("sql", {
-                    "sql": """
-                    CREATE TABLE IF NOT EXISTS channels (
-                        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        name TEXT,
-                        chat_id BIGINT UNIQUE NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS posts (
-                        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        channel_id BIGINT NOT NULL,
-                        text TEXT,
-                        media_id TEXT,
-                        media_type TEXT,
-                        format TEXT,
-                        buttons TEXT,
-                        publish_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                        published BOOLEAN DEFAULT FALSE,
-                        FOREIGN KEY (channel_id) REFERENCES channels(id)
-                    );
-                    """
-                }).execute()
+                schema_sql = """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    timezone TEXT DEFAULT 'UTC',
+                    language TEXT DEFAULT 'ru',
+                    date_format TEXT DEFAULT 'YYYY-MM-DD',
+                    time_format TEXT DEFAULT 'HH:MM',
+                    notify_before INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS channels (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    user_id BIGINT,
+                    name TEXT,
+                    chat_id BIGINT NOT NULL,
+                    UNIQUE(user_id, chat_id)
+                );
+                CREATE TABLE IF NOT EXISTS posts (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    user_id BIGINT,
+                    channel_id BIGINT,
+                    chat_id BIGINT,
+                    text TEXT,
+                    media_id TEXT,
+                    media_type TEXT,
+                    format TEXT,
+                    buttons TEXT,
+                    publish_time TIMESTAMP WITH TIME ZONE,
+                    repeat_interval BIGINT DEFAULT 0,
+                    draft BOOLEAN DEFAULT FALSE,
+                    published BOOLEAN DEFAULT FALSE,
+                    notified BOOLEAN DEFAULT FALSE,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id)
+                );
+                """
+                self.client.postgrest.rpc("sql", {"sql": schema_sql}).execute()
             except Exception:
-                pass  # If cannot create via API, assume manual setup required
-    
-    # Channel management
-    def add_channel(self, chat_id: int, name: str):
-        """Add a new channel to the database or update name if exists."""
-        # Check if channel already exists
-        res = self.client.table("channels").select("*").eq("chat_id", chat_id).execute()
-        if res.data:
-            # Already exists, update name if changed
-            self.client.table("channels").update({"name": name}).eq("chat_id", chat_id).execute()
-            return res.data[0]  # return existing
-        # Insert new channel
-        data = {"name": name, "chat_id": chat_id}
-        res = self.client.table("channels").insert(data).execute()
-        if res.data:
-            return res.data[0]
-        return None
+                # If unable to create via API (e.g., lacking permissions)
+                pass
 
-    def list_channels(self):
-        """List all channels."""
-        res = self.client.table("channels").select("*").execute()
+    # User management
+    def get_user(self, user_id: int):
+        """Retrieve user settings by Telegram user_id."""
+        res = self.client.table("users").select("*").eq("user_id", user_id).execute()
+        data = res.data or []
+        return data[0] if data else None
+
+    def ensure_user(self, user_id: int, default_lang: str = None):
+        """Ensure a user exists in the users table. Creates with defaults if not present."""
+        user = self.get_user(user_id)
+        if user:
+            return user
+        lang = default_lang or 'ru'
+        new_user = {
+            "user_id": user_id,
+            "timezone": "UTC",
+            "language": lang,
+            "date_format": "YYYY-MM-DD",
+            "time_format": "HH:MM",
+            "notify_before": 0
+        }
+        res = self.client.table("users").insert(new_user).execute()
+        return res.data[0] if res.data else None
+
+    def update_user(self, user_id: int, updates: dict):
+        """Update user settings and return the updated record."""
+        if not updates:
+            return None
+        res = self.client.table("users").update(updates).eq("user_id", user_id).execute()
+        return res.data[0] if res.data else None
+
+    # Channel management
+    def add_channel(self, user_id: int, chat_id: int, name: str):
+        """Add a new channel for the user or update its name if it exists."""
+        res = self.client.table("channels").select("*").eq("user_id", user_id).eq("chat_id", chat_id).execute()
+        if res.data:
+            # Update name if channel exists for user
+            self.client.table("channels").update({"name": name}).eq("user_id", user_id).eq("chat_id", chat_id).execute()
+            return res.data[0]
+        data = {"user_id": user_id, "name": name, "chat_id": chat_id}
+        res = self.client.table("channels").insert(data).execute()
+        return res.data[0] if res.data else None
+
+    def list_channels(self, user_id: int = None):
+        """List all channels, optionally filtered by user."""
+        query = self.client.table("channels").select("*")
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
+        res = query.execute()
         return res.data or []
 
-    def remove_channel(self, identifier: str):
-        """Remove a channel by username or chat_id or internal id."""
-        # Try to find by chat_id or name
-        # If identifier is numeric (possibly as string), treat as chat_id
+    def remove_channel(self, user_id: int, identifier: str):
+        """Remove a channel by chat_id or internal id for the given user."""
         channel_to_delete = None
         if identifier.startswith("@"):
-            # Lookup by username (username not stored, so cannot remove by username directly)
-            return False
+            return False  # Removing by username not supported
         try:
-            # Try as chat_id (int)
             cid = int(identifier)
-            # Chat IDs in Telegram can be negative; int() will handle '-' sign
-            res = self.client.table("channels").select("*").eq("chat_id", cid).execute()
+            # Try as chat_id
+            res = self.client.table("channels").select("*").eq("user_id", user_id).eq("chat_id", cid).execute()
             if res.data:
                 channel_to_delete = res.data[0]
-        except ValueError:
-            # Not a numeric id
-            # Try by internal id (identity)
-            try:
-                internal_id = int(identifier)
-                res = self.client.table("channels").select("*").eq("id", internal_id).execute()
+            else:
+                # Try as internal id
+                res = self.client.table("channels").select("*").eq("user_id", user_id).eq("id", cid).execute()
                 if res.data:
                     channel_to_delete = res.data[0]
-            except ValueError:
-                channel_to_delete = None
+        except ValueError:
+            return False
         if not channel_to_delete:
             return False
-        # Delete channel by chat_id
-        cid = channel_to_delete["chat_id"]
-        self.client.table("channels").delete().eq("chat_id", cid).execute()
-        # Also delete any scheduled posts for this channel (cleanup)
-        self.client.table("posts").delete().eq("channel_id", channel_to_delete.get("id", None)).execute()
+        chan_id = channel_to_delete.get("id")
+        # Delete channel and any related posts
+        self.client.table("channels").delete().eq("id", chan_id).execute()
+        self.client.table("posts").delete().eq("channel_id", chan_id).execute()
         return True
 
     # Post management
     def add_post(self, post_data: dict):
-        """Insert a new post into the database. Returns the inserted post record."""
-        # If buttons list is present, convert to JSON string for storage
+        """Insert a new post into the database. Returns the inserted record."""
         if "buttons" in post_data and isinstance(post_data["buttons"], list):
             post_data["buttons"] = json.dumps(post_data["buttons"])
         res = self.client.table("posts").insert(post_data).execute()
-        if res.data:
-            return res.data[0]
-        return None
+        return res.data[0] if res.data else None
 
     def get_post(self, post_id: int):
         """Retrieve a single post by id."""
@@ -116,37 +149,32 @@ class SupabaseDB:
         data = res.data or []
         return data[0] if data else None
 
-    def list_posts(self, only_pending=True):
-        """List posts (pending or all)."""
+    def list_posts(self, user_id: int = None, only_pending: bool = True):
+        """List posts, optionally filtered by user and published status."""
         query = self.client.table("posts").select("*")
         if only_pending:
             query = query.eq("published", False)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
         query = query.order("publish_time", asc=True)
         res = query.execute()
         return res.data or []
 
     def update_post(self, post_id: int, updates: dict):
-        """Update fields of a post."""
-        # If buttons in updates is list, convert to JSON string
+        """Update fields of a post and return the updated record."""
         if "buttons" in updates and isinstance(updates["buttons"], list):
             updates["buttons"] = json.dumps(updates["buttons"])
         res = self.client.table("posts").update(updates).eq("id", post_id).execute()
-        if res.data:
-            return res.data[0]
-        return None
+        return res.data[0] if res.data else None
 
     def delete_post(self, post_id: int):
         """Delete a post by id."""
         self.client.table("posts").delete().eq("id", post_id).execute()
 
     def get_due_posts(self, current_time):
-        """Get all posts that should be published at or before current_time (and not yet published)."""
-        # Ensure current_time is string in ISO format for comparison
-        if hasattr(current_time, "isoformat"):
-            now_str = current_time.strftime("%Y-%m-%dT%H:%M:%S")
-        else:
-            now_str = str(current_time)
-        res = self.client.table("posts").select("*").eq("published", False).lte("publish_time", now_str).execute()
+        """Get all posts due at or before current_time (not published and not drafts)."""
+        now_str = current_time.strftime("%Y-%m-%dT%H:%M:%S%z") if hasattr(current_time, "strftime") else str(current_time)
+        res = self.client.table("posts").select("*").eq("published", False).eq("draft", False).lte("publish_time", now_str).execute()
         return res.data or []
 
     def mark_post_published(self, post_id: int):
