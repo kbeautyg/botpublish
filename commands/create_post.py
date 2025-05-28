@@ -28,6 +28,9 @@ def parse_time(user: dict, text: str):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:mm")
     tz_name = user.get("timezone", "UTC")
+    # Adjust format to avoid conflict between month and minute tokens
+    if "MM" in time_fmt:
+        time_fmt = time_fmt.replace("MM", "mm")
     fmt = format_to_strptime(date_fmt, time_fmt)
     dt = datetime.strptime(text, fmt)
     try:
@@ -41,6 +44,9 @@ def parse_time(user: dict, text: str):
 def format_example(user: dict):
     date_fmt = user.get("date_format", "YYYY-MM-DD")
     time_fmt = user.get("time_format", "HH:mm")
+    # Adjust time format for example formatting
+    if "MM" in time_fmt:
+        time_fmt = time_fmt.replace("MM", "mm")
     fmt = format_to_strptime(date_fmt, time_fmt)
     now = datetime.now()
     try:
@@ -65,7 +71,7 @@ async def cmd_create(message: Message, state: FSMContext):
         user = supabase_db.db.ensure_user(user_id)
     await state.update_data(user_settings=user)
     await state.set_state(CreatePost.text)
-    lang = user.get("language", "ru")
+    lang = user.get("language", "ru") if user else "ru"
     await message.answer(TEXTS[lang]['create_step1'])
 
 @router.message(CreatePost.text, Command("skip"))
@@ -176,6 +182,11 @@ async def got_time(message: Message, state: FSMContext):
     except Exception:
         example = format_example(user)
         await message.answer(TEXTS[lang]['create_time_error'].format(example=example))
+        return
+    # Prevent scheduling in the past
+    now_utc = datetime.now(ZoneInfo("UTC"))
+    if utc_dt <= now_utc:
+        await message.answer(TEXTS[lang]['time_past_error'])
         return
     await state.update_data(publish_time=utc_dt, draft=False)
     await ask_repeat(message, state)
@@ -298,9 +309,11 @@ async def show_preview(message: Message, state: FSMContext):
     channel_name = data.get("channel_name")
     publish_time = data.get("publish_time")
     draft = data.get("draft", False)
-    repeat_interval = data.get("repeat_interval", 0)
+    repeat_interval = data.get("repeat_interval, 0")
     if draft or publish_time is None:
-        prompt = f"Шаг 8/8: подтвердите сохранение черновика для «{channel_name}». (Не будет опубликован автоматически.)" if lang == "ru" else f"Step 8/8: confirm saving draft for \"{channel_name}\". (It will not be posted automatically.)"
+        prompt = (f"Шаг 8/8: подтвердите сохранение черновика для «{channel_name}». (Не будет опубликован автоматически.)"
+                 if lang == "ru" else
+                 f"Step 8/8: confirm saving draft for \"{channel_name}\". (It will not be posted automatically.)")
     else:
         pub_dt = publish_time if isinstance(publish_time, datetime) else None
         if pub_dt is None:
@@ -317,6 +330,7 @@ async def show_preview(message: Message, state: FSMContext):
         local_str = local_dt.strftime(format_to_strptime(user.get("date_format", "YYYY-MM-DD"), user.get("time_format", "HH:MM")))
         utc_str = pub_dt.strftime("%Y-%m-%d %H:%M UTC")
         if repeat_interval and repeat_interval > 0:
+            # Describe repeat interval in human-readable form
             interval_desc = ""
             if repeat_interval % 86400 == 0:
                 days = repeat_interval // 86400
@@ -334,24 +348,25 @@ async def show_preview(message: Message, state: FSMContext):
                 minutes = repeat_interval // 60
                 interval_desc = f"каждые {minutes} минут" if lang == "ru" else f"every {minutes} minutes"
             prompt = (f"Шаг 8/8: подтвердите публикацию в «{channel_name}» {local_str} (UTC: {utc_str}).\nБудет повторяться {interval_desc}."
-                      if lang == "ru" else
-                      f"Step 8/8: confirm posting to \"{channel_name}\" at {local_str} (UTC: {utc_str}).\nIt will repeat {interval_desc}.")
+                     if lang == "ru" else
+                     f"Step 8/8: confirm posting to \"{channel_name}\" at {local_str} (UTC: {utc_str}).\nIt will repeat {interval_desc}.")
         else:
-            prompt = f"Шаг 8/8: подтвердите публикацию в «{channel_name}» {local_str} (UTC: {utc_str})." if lang == "ru" else f"Step 8/8: confirm posting to \"{channel_name}\" at {local_str} (UTC: {utc_str})."
-    confirm_kb = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Подтвердить" if lang == "ru" else "✅ Confirm", callback_data="create_ok"),
-            InlineKeyboardButton(text="❌ Отмена" if lang == "ru" else "❌ Cancel", callback_data="create_cancel")
-        ]]
-    )
-    await message.answer(prompt, reply_markup=confirm_kb)
+            prompt = (f"Шаг 8/8: подтвердите публикацию в «{channel_name}» {local_str} (UTC: {utc_str})."
+                     if lang == "ru" else
+                     f"Step 8/8: confirm posting to \"{channel_name}\" at {local_str} (UTC: {utc_str}).")
+    # Prompt user to confirm or cancel via text commands
+    confirm_instruction = ("\nДля подтверждения отправьте /confirm, для отмены /cancel."
+                           if lang == "ru" else
+                           "\nSend /confirm to confirm or /cancel to cancel.")
+    await message.answer(prompt + confirm_instruction)
     await state.set_state(CreatePost.confirm)
 
-@router.callback_query(CreatePost.confirm, F.data == "create_ok")
-async def confirm_ok(callback: types.CallbackQuery, state: FSMContext):
+@router.message(CreatePost.confirm, Command("confirm"))
+async def confirm_create(message: Message, state: FSMContext):
     data = await state.get_data()
+    # Prepare post data for saving
     post_data = {
-        "user_id": callback.from_user.id,
+        "user_id": message.from_user.id,
         "channel_id": data["channel_db_id"],
         "chat_id": data["channel_chat_id"],
         "text": data.get("text", ""),
@@ -375,16 +390,5 @@ async def confirm_ok(callback: types.CallbackQuery, state: FSMContext):
             post_data["publish_time"] = pub_time
     supabase_db.db.add_post(post_data)
     lang = data.get("user_settings", {}).get("language", "ru")
-    await callback.message.answer(TEXTS[lang]['confirm_post_scheduled'] if not data.get("draft") else TEXTS[lang]['confirm_post_draft'])
+    await message.answer(TEXTS[lang]['confirm_post_scheduled'] if not data.get("draft") else TEXTS[lang]['confirm_post_draft'])
     await state.clear()
-    await callback.answer()
-
-@router.callback_query(CreatePost.confirm, F.data == "create_cancel")
-async def confirm_cancel(callback: types.CallbackQuery, state: FSMContext):
-    lang = "ru"
-    data = await state.get_data()
-    if data.get("user_settings"):
-        lang = data["user_settings"].get("language", "ru")
-    await callback.message.answer(TEXTS[lang]['confirm_post_cancel'])
-    await state.clear()
-    await callback.answer()
