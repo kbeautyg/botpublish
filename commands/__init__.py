@@ -9,6 +9,7 @@ TEXTS = {
                  "/reschedule <ID> <дата/время> – перенести время публикации\n"
                  "/delete <ID> – удалить пост\n"
                  "/channels – управление каналами\n"
+                 "/project – проекты (смена/создание)\n"
                  "/settings – настройки пользователя\n"
                  "/cancel – отменить ввод"),
         'channels_no_channels': "Список каналов пуст. Добавьте канал:\n/channels add <ID_канала или @username>",
@@ -21,6 +22,7 @@ TEXTS = {
         'channels_removed': "Канал удалён.",
         'channels_not_found': "Канал не найден.",
         'channels_unknown_command': "Неизвестная подкоманда. Используйте /channels add | remove",
+        'channels_remove_confirm': "Удалить канал «{name}»? Все связанные посты будут удалены.",
         'no_channels': "Нет доступных каналов. Сначала добавьте канал через /channels.",
         'create_step1': "Шаг 1/8: отправьте текст поста (или /skip).",
         'create_step2': "Шаг 2/8: пришлите фото или видео, или /skip.",
@@ -55,7 +57,7 @@ TEXTS = {
         'edit_no_buttons': "Для поста нет кнопок.\nОтправьте кнопки в формате Текст | URL, или /skip, чтобы пропустить, или 'нет' чтобы оставить без кнопок.",
         'edit_current_time': "Текущее время публикации: {time}\nВведите новую дату/время в формате {format}, или /skip для сохранения, или 'none' для удаления времени (черновик).",
         'edit_time_error': "Неверный формат. Введите в формате {format} или /skip.",
-        'edit_current_repeat': "Текущий интервал повтора: {repeat}\nВведите новый интервал (0 – без повтора) или /skip для сохранения.",
+        'edit_current_repeat': "Текущий интервал повтора: {repeat}\nВведите новый интервал (0 — без повтора) или /skip для сохранения.",
         'edit_repeat_error': "Неверный формат интервала. Примеры: 0, 1d, 12h, 30m.",
         'edit_choose_channel': "Выберите новый канал для поста (или отправьте /skip, чтобы оставить текущий):",
         'edit_keep_current_channel': "Оставить текущий",
@@ -75,6 +77,7 @@ TEXTS = {
         'delete_not_found': "Пост с таким ID не найден.",
         'delete_already_published': "Этот пост уже был опубликован, его нельзя удалить.",
         'delete_success': "Пост #{id} удалён.",
+        'delete_confirm': "Удалить пост #{id}? Это действие необратимо.",
         'no_text': "(без текста)",
         'media_photo': "фото",
         'media_video': "видео",
@@ -90,11 +93,11 @@ TEXTS = {
         'settings_datefmt_usage': "Использование:\n/settings datefmt <формат даты> (например, DD.MM.YYYY)",
         'settings_timefmt_usage': "Использование:\n/settings timefmt <формат времени> (например, HH:MM)",
         'settings_notify_usage': "Использование:\n/settings notify <минут до уведомления> (0 для выкл.)",
-        'settings_unknown': "Неизвестный параметр. Доступно: tz, lang, datefmt, timefmt, notify",
-        'settings_tz_set': "Часовой пояс обновлён: {tz}",
-        'settings_lang_set': "Язык обновлён: {lang_name}",
-        'settings_datefmt_set': "Формат даты обновлён: {fmt}",
-        'settings_timefmt_set': "Формат времени обновлён: {fmt}",
+        'settings_unknown': "Неизвестная настройка. Доступно: tz, lang, datefmt, timefmt, notify",
+        'settings_tz_set': "Часовой пояс обновлен: {tz}",
+        'settings_lang_set': "Язык интерфейса обновлен: {lang_name}",
+        'settings_datefmt_set': "Формат даты обновлен: {fmt}",
+        'settings_timefmt_set': "Формат времени обновлен: {fmt}",
         'settings_notify_set': "Уведомления перед публикацией: {minutes_str}",
         'settings_invalid_tz': "Неправильный часовой пояс. Пример: Europe/Moscow или UTC+3",
         'settings_invalid_lang': "Неподдерживаемый язык. Доступно: ru, en",
@@ -105,7 +108,19 @@ TEXTS = {
         'lang_en': "Английский",
         'notify_message': "⌛️ Скоро будет опубликован пост #{id} в канале {channel} (через {minutes} мин.).",
         'notify_message_less_min': "⌛️ Скоро будет опубликован пост #{id} в канале {channel} (менее чем через минуту).",
-        'error_post_failed': "⚠️ Не удалось отправить пост #{id} в канал {channel}: {error}"
+        'error_post_failed': "⚠️ Не удалось отправить пост #{id} в канал {channel}: {error}",
+        'projects_list_title': "Ваши проекты:",
+        'projects_item': "- {name}",
+        'projects_item_current': "- {name} (текущий)",
+        'projects_created': "Проект \"{name}\" создан ✅",
+        'projects_switched': "Переключено на проект \"{name}\" ✅",
+        'projects_not_found': "Проект не найден или доступ запрещен.",
+        'projects_invite_usage': "Использование:\n/project invite <ID пользователя>",
+        'projects_invite_success': "Пользователь {user_id} добавлен в проект.",
+        'projects_invite_not_found': "Пользователь не найден или не запускал бота.",
+        'projects_invited_notify': "Вас добавили в проект \"{project}\" пользователем {user}. Используйте /project для переключения.",
+        'yes_btn': "Да",
+        'no_btn': "Нет"
     },
     'en': {
         'start_welcome': "Hello! I'm a bot for scheduling posts.\nUse /help to see available commands.",
@@ -117,6 +132,7 @@ TEXTS = {
                  "/reschedule <ID> <datetime> – reschedule a post\n"
                  "/delete <ID> – delete a post\n"
                  "/channels – manage channels\n"
+                 "/project – projects (switch/create)\n"
                  "/settings – user settings\n"
                  "/cancel – cancel input"),
         'channels_no_channels': "No channels added. Add a channel via:\n/channels add <channel_id or @username>",
@@ -129,13 +145,14 @@ TEXTS = {
         'channels_removed': "Channel removed.",
         'channels_not_found': "Channel not found.",
         'channels_unknown_command': "Unknown subcommand. Use /channels add | remove",
+        'channels_remove_confirm': "Remove channel \"{name}\"? All associated posts will be deleted.",
         'no_channels': "No channels available. Please add a channel via /channels first.",
         'create_step1': "Step 1/8: send the post text (or /skip).",
         'create_step2': "Step 2/8: send a photo or video, or /skip.",
         'create_step2_retry': "Please send a photo or video, or /skip.",
         'create_step3': "Step 3/8: choose format (Markdown, HTML or None).",
         'create_step4': ("Step 4/8: send buttons.\n"
-                         "One button per line in format: Text | URL.\n"
+                         "One button per line: Text | URL.\n"
                          "If no buttons needed, send /skip."),
         'create_step5': "Step 5/8: send the date/time in format {format}.",
         'create_time_error': "Invalid format. Example: {example}.",
@@ -183,6 +200,7 @@ TEXTS = {
         'delete_not_found': "Post not found.",
         'delete_already_published': "This post has already been published and cannot be deleted.",
         'delete_success': "Post #{id} deleted.",
+        'delete_confirm': "Delete post #{id}? This action cannot be undone.",
         'no_text': "(no text)",
         'media_photo': "photo",
         'media_video': "video",
@@ -213,6 +231,18 @@ TEXTS = {
         'lang_en': "English",
         'notify_message': "⌛️ Post #{id} in channel {channel} will be posted in {minutes} min.",
         'notify_message_less_min': "⌛️ Post #{id} in channel {channel} will be posted in less than a minute.",
-        'error_post_failed': "⚠️ Failed to send post #{id} to channel {channel}: {error}"
+        'error_post_failed': "⚠️ Failed to send post #{id} to channel {channel}: {error}",
+        'projects_list_title': "Your projects:",
+        'projects_item': "- {name}",
+        'projects_item_current': "- {name} (current)",
+        'projects_created': "Project \"{name}\" created ✅",
+        'projects_switched': "Switched to project \"{name}\" ✅",
+        'projects_not_found': "Project not found or access denied.",
+        'projects_invite_usage': "Usage:\n/project invite <user_id>",
+        'projects_invite_success': "User {user_id} added to the project.",
+        'projects_invite_not_found': "User not found or has not started the bot.",
+        'projects_invited_notify': "You have been added to project \"{project}\" by {user}. Use /project to switch to it.",
+        'yes_btn': "Yes",
+        'no_btn': "No"
     }
 }
