@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import os
 from aiogram import Bot, Dispatcher
@@ -24,7 +23,7 @@ bot = Bot(token=BOT_TOKEN, parse_mode=None)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Include routers from command modules
-from commands import start, help, channels, create_post, edit_post, list_posts, delete_post, settings
+from commands import start, help, channels, create_post, edit_post, list_posts, delete_post, settings, projects
 dp.include_router(start.router)
 dp.include_router(help.router)
 dp.include_router(channels.router)
@@ -33,6 +32,7 @@ dp.include_router(edit_post.router)
 dp.include_router(list_posts.router)
 dp.include_router(delete_post.router)
 dp.include_router(settings.router)
+dp.include_router(projects.router)
 
 # Import and start the scheduler
 from scheduler import auto_post
