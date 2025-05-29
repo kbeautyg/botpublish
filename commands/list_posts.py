@@ -1,6 +1,7 @@
 from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext   # <-- добавлен импорт
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from storage import supabase_db
