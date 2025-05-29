@@ -1,14 +1,10 @@
-from aiogram import Router
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext        # ← добавили
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import json                                       # ← добавили
+import asyncio
+from datetime import datetime, timedelta, timezone
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from storage import supabase_db
 from commands import TEXTS
-from commands.create_post import parse_time, format_example
-
+import json
 
 async def start_scheduler(bot: Bot, check_interval: int = 5):
     """Background task to publish scheduled posts and send notifications."""
