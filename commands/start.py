@@ -1,4 +1,3 @@
-# commands/start.py
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -18,7 +17,7 @@ async def cmd_start(message: Message, state: FSMContext):
         default_lang = "en"
     elif lang_code.startswith("ru"):
         default_lang = "ru"
-    # Ensure user exists with default settings
+    # Ensure user exists with default settings (and default project)
     user = supabase_db.db.ensure_user(user_id, default_lang=default_lang)
     # Greet in user's language
     lang = user.get("language", default_lang) if user else default_lang
