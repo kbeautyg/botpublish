@@ -1,9 +1,10 @@
 from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext   # ← ДОБАВЬ ВОТ ЭТУ СТРОКУ
+from aiogram.fsm.context import FSMContext        # ← добавили
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import json                                       # ← добавили
 from storage import supabase_db
 from commands import TEXTS
 from commands.create_post import parse_time, format_example
