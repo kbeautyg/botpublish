@@ -1,5 +1,5 @@
 from aiogram import Router, types, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
@@ -59,19 +59,18 @@ router = Router()
 @router.message(Command("create"))
 async def cmd_create(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    if not supabase_db.db.list_channels(user_id=user_id):
-        lang = "ru"
-        user = supabase_db.db.get_user(user_id)
-        if user:
-            lang = user.get("language", "ru")
+    user = supabase_db.db.get_user(user_id)
+    lang = user.get("language", "ru") if user else "ru"
+    # Ensure user and active project
+    if not user:
+        user = supabase_db.db.ensure_user(user_id, default_lang=lang)
+        lang = user.get("language", lang)
+    project_id = user.get("current_project") if user else None
+    if not project_id or not supabase_db.db.list_channels(project_id=project_id):
         await message.answer(TEXTS[lang]['no_channels'])
         return
-    user = supabase_db.db.get_user(user_id)
-    if not user:
-        user = supabase_db.db.ensure_user(user_id)
     await state.update_data(user_settings=user)
     await state.set_state(CreatePost.text)
-    lang = user.get("language", "ru") if user else "ru"
     await message.answer(TEXTS[lang]['create_step1'])
 
 @router.message(CreatePost.text, Command("skip"))
@@ -88,6 +87,7 @@ async def next_media_step(message: Message, state: FSMContext):
     await state.set_state(CreatePost.media)
     data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
+    # Remove any reply keyboard if present
     await message.answer(TEXTS[lang]['create_step2'], reply_markup=ReplyKeyboardRemove())
 
 @router.message(CreatePost.media, Command("skip"))
@@ -109,37 +109,31 @@ async def got_video(message: Message, state: FSMContext):
 async def wrong_media(message: Message, state: FSMContext):
     data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
+    # If wrong media type, prompt again
     await message.answer(TEXTS[lang]['create_step2_retry'])
 
 async def ask_format(message: Message, state: FSMContext):
     await state.set_state(CreatePost.format)
     data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
-    none_text = "Без" if lang == "ru" else "None"
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Markdown"), KeyboardButton(text="HTML"), KeyboardButton(text=none_text)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
+    # Offer format choices via reply keyboard
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Markdown"), KeyboardButton(text="HTML"), KeyboardButton(text="Без форматирования" if lang == "ru" else "None")]], resize_keyboard=True, one_time_keyboard=True)
     await message.answer(TEXTS[lang]['create_step3'], reply_markup=kb)
-
-@router.message(CreatePost.format, Command("skip"))
-async def skip_format(message: Message, state: FSMContext):
-    await state.update_data(format="none")
-    await ask_buttons(message, state)
 
 @router.message(CreatePost.format)
 async def got_format(message: Message, state: FSMContext):
     raw = (message.text or "").strip().lower()
-    fmt = "markdown" if raw.startswith("markdown") else "html" if raw.startswith("html") else "none"
-    await state.update_data(format=fmt)
+    new_fmt = "markdown" if raw.startswith("markdown") else "html" if raw.startswith("html") else "none"
+    await state.update_data(format=new_fmt)
+    # Remove the format keyboard
+    await message.answer("OK", reply_markup=ReplyKeyboardRemove())
     await ask_buttons(message, state)
 
 async def ask_buttons(message: Message, state: FSMContext):
     await state.set_state(CreatePost.buttons)
     data = await state.get_data()
     lang = data.get("user_settings", {}).get("language", "ru")
-    await message.answer(TEXTS[lang]['create_step4'], reply_markup=ReplyKeyboardRemove())
+    await message.answer(TEXTS[lang]['create_step4'])
 
 @router.message(CreatePost.buttons, Command("skip"))
 async def skip_buttons(message: Message, state: FSMContext):
@@ -148,47 +142,54 @@ async def skip_buttons(message: Message, state: FSMContext):
 
 @router.message(CreatePost.buttons)
 async def got_buttons(message: Message, state: FSMContext):
-    btns = []
-    for line in message.text.splitlines():
-        if "|" in line:
-            parts = line.split("|", 1)
-            btn_text = parts[0].strip(); btn_url = parts[1].strip()
-            if btn_text and btn_url:
-                btns.append({"text": btn_text, "url": btn_url})
-    await state.update_data(buttons=btns)
+    text = message.text or ""
+    if text.strip().lower() in ("нет", "none"):
+        # No buttons
+        await state.update_data(buttons=[])
+    else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        buttons = []
+        for line in lines:
+            parts = line.split("|")
+            if len(parts) >= 2:
+                btn_text = parts[0].strip()
+                btn_url = parts[1].strip()
+                if btn_text and btn_url:
+                    buttons.append({"text": btn_text, "url": btn_url})
+        await state.update_data(buttons=buttons)
     await ask_time(message, state)
 
 async def ask_time(message: Message, state: FSMContext):
     await state.set_state(CreatePost.time)
     data = await state.get_data()
     user = data.get("user_settings", {})
-    lang = user.get("language", "ru")
+    lang = user.get("language", "ru") if user else "ru"
+    example = format_example(user or {})
     fmt = f"{user.get('date_format', 'YYYY-MM-DD')} {user.get('time_format', 'HH:MM')}"
-    example = format_example(user)
-    await message.answer(TEXTS[lang]['create_step5'].format(format=fmt, example=example))
-
-@router.message(CreatePost.time, Command("skip"))
-async def skip_time(message: Message, state: FSMContext):
-    await state.update_data(publish_time=None, draft=True)
-    await ask_channel(message, state)
+    await message.answer(TEXTS[lang]['create_step5'].format(format=fmt))
 
 @router.message(CreatePost.time)
 async def got_time(message: Message, state: FSMContext):
     data = await state.get_data()
-    user = data.get("user_settings", {})
+    user = data.get("user_settings", {}) or {}
     lang = user.get("language", "ru")
+    text = (message.text or "").strip()
+    # Check for special 'none' keyword to indicate draft (no time)
+    if text.lower() in ("none", "нет"):
+        await state.update_data(publish_time=None, draft=True)
+        await ask_repeat(message, state)
+        return
     try:
-        utc_dt = parse_time(user, message.text.strip())
+        pub_dt = parse_time(user, text)
     except Exception:
         example = format_example(user)
         await message.answer(TEXTS[lang]['create_time_error'].format(example=example))
         return
-    # Prevent scheduling in the past
-    now_utc = datetime.now(ZoneInfo("UTC"))
-    if utc_dt <= now_utc:
+    now = datetime.now(ZoneInfo("UTC"))
+    if pub_dt <= now:
         await message.answer(TEXTS[lang]['time_past_error'])
         return
-    await state.update_data(publish_time=utc_dt, draft=False)
+    await state.update_data(publish_time=pub_dt, draft=False)
     await ask_repeat(message, state)
 
 async def ask_repeat(message: Message, state: FSMContext):
@@ -197,26 +198,22 @@ async def ask_repeat(message: Message, state: FSMContext):
     lang = data.get("user_settings", {}).get("language", "ru")
     await message.answer(TEXTS[lang]['create_step6'])
 
-@router.message(CreatePost.repeat, Command("skip"))
-async def skip_repeat(message: Message, state: FSMContext):
-    await state.update_data(repeat_interval=0)
-    await ask_channel(message, state)
-
 @router.message(CreatePost.repeat)
 async def got_repeat(message: Message, state: FSMContext):
-    raw = message.text.strip().lower()
     data = await state.get_data()
-    lang = data.get("user_settings", {}).get("language", "ru")
+    user = data.get("user_settings", {}) or {}
+    lang = user.get("language", "ru")
+    raw = (message.text or "").strip().lower()
     interval = 0
-    if raw in ("0", "none", "нет"):
+    if raw in ("0", "/skip", "нет", "none"):
         interval = 0
     else:
-        unit = raw[-1]
+        unit = raw[-1] if raw else ""
         try:
             value = int(raw[:-1])
         except:
             value = None
-        if value is None or unit not in ("d", "h", "m"):
+        if not value or unit not in ("d", "h", "m"):
             await message.answer(TEXTS[lang]['create_repeat_error'])
             return
         if unit == "d":
@@ -231,8 +228,10 @@ async def got_repeat(message: Message, state: FSMContext):
 async def ask_channel(message: Message, state: FSMContext):
     await state.set_state(CreatePost.channel)
     data = await state.get_data()
-    lang = data.get("user_settings", {}).get("language", "ru")
-    channels = supabase_db.db.list_channels(user_id=message.from_user.id)
+    user = data.get("user_settings", {}) or {}
+    lang = user.get("language", "ru")
+    # List channels in current project for selection
+    channels = supabase_db.db.list_channels(project_id=user.get("current_project"))
     if not channels:
         await message.answer(TEXTS[lang]['channels_no_channels'])
         return
@@ -271,7 +270,7 @@ async def choose_channel(message: Message, state: FSMContext):
 
 async def show_preview(message: Message, state: FSMContext):
     data = await state.get_data()
-    user = data.get("user_settings", {})
+    user = data.get("user_settings", {}) or {}
     lang = user.get("language", "ru")
     text = data.get("text", "")
     media_id = data.get("media_id")
@@ -297,6 +296,7 @@ async def show_preview(message: Message, state: FSMContext):
                 kb.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
         if kb:
             markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    # Send a preview of the post content
     try:
         if media_id and media_type == "photo":
             await message.answer_photo(media_id, caption=text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
@@ -305,11 +305,12 @@ async def show_preview(message: Message, state: FSMContext):
         else:
             await message.answer(text or TEXTS[lang]['no_text'], parse_mode=parse_mode, reply_markup=markup)
     except Exception as e:
-        await message.answer(f"Предпросмотр недоступен: {e}")
+        await message.answer(f"Предпросмотр недоступен: {e}" if lang == "ru" else f"Preview unavailable: {e}")
+    # Build confirmation prompt text
     channel_name = data.get("channel_name")
     publish_time = data.get("publish_time")
     draft = data.get("draft", False)
-    repeat_interval = data.get("repeat_interval, 0")
+    repeat_interval = data.get("repeat_interval", 0)
     if draft or publish_time is None:
         prompt = (f"Шаг 8/8: подтвердите сохранение черновика для «{channel_name}». (Не будет опубликован автоматически.)"
                  if lang == "ru" else
@@ -354,19 +355,24 @@ async def show_preview(message: Message, state: FSMContext):
             prompt = (f"Шаг 8/8: подтвердите публикацию в «{channel_name}» {local_str} (UTC: {utc_str})."
                      if lang == "ru" else
                      f"Step 8/8: confirm posting to \"{channel_name}\" at {local_str} (UTC: {utc_str}).")
-    # Prompt user to confirm or cancel via text commands
-    confirm_instruction = ("\nДля подтверждения отправьте /confirm, для отмены /cancel."
-                           if lang == "ru" else
-                           "\nSend /confirm to confirm or /cancel to cancel.")
-    await message.answer(prompt + confirm_instruction)
+    # Send confirm/cancel prompt with inline buttons
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=TEXTS[lang]['yes_btn'], callback_data="confirm_create"),
+            InlineKeyboardButton(text=TEXTS[lang]['no_btn'], callback_data="cancel_create")
+        ]
+    ])
+    await message.answer(prompt, reply_markup=confirm_kb)
     await state.set_state(CreatePost.confirm)
 
-@router.message(CreatePost.confirm, Command("confirm"))
-async def confirm_create(message: Message, state: FSMContext):
+@router.callback_query(F.data == "confirm_create")
+async def on_confirm_create(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    # Prepare post data for saving
+    user = data.get("user_settings", {})
+    lang = user.get("language", "ru") if user else "ru"
     post_data = {
-        "user_id": message.from_user.id,
+        "user_id": callback.from_user.id,
+        "project_id": user.get("current_project"),
         "channel_id": data["channel_db_id"],
         "chat_id": data["channel_chat_id"],
         "text": data.get("text", ""),
@@ -389,6 +395,24 @@ async def confirm_create(message: Message, state: FSMContext):
         else:
             post_data["publish_time"] = pub_time
     supabase_db.db.add_post(post_data)
-    lang = data.get("user_settings", {}).get("language", "ru")
-    await message.answer(TEXTS[lang]['confirm_post_scheduled'] if not data.get("draft") else TEXTS[lang]['confirm_post_draft'])
+    # Edit the confirmation prompt message to success
+    success_text = TEXTS[lang]['confirm_post_scheduled'] if not data.get("draft") else TEXTS[lang]['confirm_post_draft']
+    try:
+        await callback.message.edit_text(success_text)
+    except:
+        await callback.answer(success_text, show_alert=True)
     await state.clear()
+    await callback.answer()
+
+@router.callback_query(F.data == "cancel_create")
+async def on_cancel_create(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    user = data.get("user_settings", {})
+    lang = user.get("language", "ru") if user else "ru"
+    # Edit prompt message to cancellation notice
+    try:
+        await callback.message.edit_text(TEXTS[lang]['confirm_post_cancel'])
+    except:
+        await callback.answer(TEXTS[lang]['confirm_post_cancel'], show_alert=True)
+    await state.clear()
+    await callback.answer()
