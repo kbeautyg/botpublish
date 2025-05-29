@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from aiogram import Bot
+from aiogram.fsm.context import FSMContext   # ← ДОБАВЬ ВОТ ЭТУ СТРОКУ
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from storage import supabase_db
 from commands import TEXTS
