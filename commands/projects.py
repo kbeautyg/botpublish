@@ -1,4 +1,5 @@
 from aiogram import Router, Bot
+from aiogram import F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
