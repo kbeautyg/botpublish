@@ -1,10 +1,10 @@
-# scheduler/auto_post.py
 import asyncio
 from datetime import datetime, timedelta, timezone
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from storage import supabase_db
 from commands import TEXTS
+import json
 
 async def start_scheduler(bot: Bot, check_interval: int = 5):
     """Background task to publish scheduled posts and send notifications."""
@@ -22,11 +22,9 @@ async def start_scheduler(bot: Bot, check_interval: int = 5):
             else:
                 chan_id = post.get("channel_id")
                 if chan_id:
-                    channels = supabase_db.db.list_channels(user_id) if user_id is not None else supabase_db.db.list_channels()
-                    for ch in channels:
-                        if ch.get("id") == chan_id:
-                            chat_id = ch.get("chat_id")
-                            break
+                    channel = supabase_db.db.get_channel(chan_id)
+                    if channel:
+                        chat_id = channel.get("chat_id")
             if not chat_id:
                 # No valid channel, mark as published to skip
                 supabase_db.db.mark_post_published(post_id)
@@ -74,11 +72,9 @@ async def start_scheduler(bot: Bot, check_interval: int = 5):
                 error_msg = str(e)
                 if user_id:
                     chan_name = str(chat_id)
-                    channels = supabase_db.db.list_channels(user_id)
-                    for ch in channels:
-                        if ch.get("chat_id") == chat_id:
-                            chan_name = ch.get("name") or str(chat_id)
-                            break
+                    channel = supabase_db.db.get_channel_by_chat_id(chat_id)
+                    if channel:
+                        chan_name = channel.get("name") or str(chat_id)
                     lang = "ru"
                     user = supabase_db.db.get_user(user_id)
                     if user:
@@ -140,15 +136,14 @@ async def start_scheduler(bot: Bot, check_interval: int = 5):
                         lang = user.get("language", "ru")
                         chan_name = ""
                         chan_id = post.get("channel_id"); chat_id = post.get("chat_id")
-                        channels = supabase_db.db.list_channels(user_id)
-                        for ch in channels:
-                            if chan_id and ch.get("id") == chan_id:
-                                chan_name = ch.get("name") or str(ch.get("chat_id"))
-                                break
-                            if chat_id and ch.get("chat_id") == chat_id:
-                                chan_name = ch.get("name") or str(chat_id)
-                                break
-                        if not chan_name:
+                        channel = None
+                        if chan_id:
+                            channel = supabase_db.db.get_channel(chan_id)
+                        if not channel and chat_id:
+                            channel = supabase_db.db.get_channel_by_chat_id(chat_id)
+                        if channel:
+                            chan_name = channel.get("name") or str(channel.get("chat_id"))
+                        else:
                             chan_name = str(chat_id) if chat_id else ""
                         minutes_left = int((pub_dt - now).total_seconds() // 60)
                         if minutes_left < 1:
@@ -159,7 +154,7 @@ async def start_scheduler(bot: Bot, check_interval: int = 5):
                             await bot.send_message(user_id, notify_text)
                             supabase_db.db.update_post(post["id"], {"notified": True})
                         except Exception as e:
-                            print(f"Failed to send notification for post {post['id']} to user {user_id}: {e}")
+                            print(f"Failed to send notification to user {user_id}: {e}")
                 except Exception as e:
-                    print(f"Error in notification check for post {post.get('id')}: {e}")
+                    print(f"Notification check failed for post {post.get('id')}: {e}")
         await asyncio.sleep(check_interval)
