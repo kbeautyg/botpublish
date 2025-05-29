@@ -1,4 +1,3 @@
-# states.py
 from aiogram.fsm.state import State, StatesGroup
 
 class CreatePost(StatesGroup):
@@ -20,3 +19,6 @@ class EditPost(StatesGroup):
     repeat = State()
     channel = State()
     confirm = State()
+
+class NewProject(StatesGroup):
+    name = State()
