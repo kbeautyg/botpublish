@@ -159,14 +159,29 @@ class SupabaseDB:
             return False
 
     # Channel management
-    def add_channel(self, user_id: int, chat_id: int, name: str, project_id: int):
+    def add_channel(self, user_id: int, chat_id: int, name: str, project_id: int, username: str = None, is_admin_verified: bool = False):
         """Add a new channel to the project (or update its name if it exists)."""
         res = self.client.table("channels").select("*").eq("project_id", project_id).eq("chat_id", chat_id).execute()
         if res.data:
-            # Update name if channel exists in this project
-            self.client.table("channels").update({"name": name}).eq("project_id", project_id).eq("chat_id", chat_id).execute()
+            # Update channel info if it exists in this project
+            update_data = {
+                "name": name,
+                "username": username,
+                "is_admin_verified": is_admin_verified,
+                "admin_check_date": "now()"
+            }
+            self.client.table("channels").update(update_data).eq("project_id", project_id).eq("chat_id", chat_id).execute()
             return res.data[0]
-        data = {"user_id": user_id, "project_id": project_id, "name": name, "chat_id": chat_id}
+        
+        data = {
+            "user_id": user_id, 
+            "project_id": project_id, 
+            "name": name, 
+            "chat_id": chat_id,
+            "username": username,
+            "is_admin_verified": is_admin_verified,
+            "admin_check_date": "now()" if is_admin_verified else None
+        }
         res_insert = self.client.table("channels").insert(data).execute()
         return res_insert.data[0] if res_insert.data else None
 
@@ -272,3 +287,54 @@ class SupabaseDB:
     def mark_post_published(self, post_id: int):
         """Mark a post as published."""
         self.client.table("posts").update({"published": True}).eq("id", post_id).execute()
+
+    def update_channel_admin_status(self, channel_id: int, is_admin: bool):
+        """Update channel admin verification status."""
+        update_data = {
+            "is_admin_verified": is_admin,
+            "admin_check_date": "now()"
+        }
+        self.client.table("channels").update(update_data).eq("id", channel_id).execute()
+
+    def list_posts_by_channel(self, channel_id: int, only_pending: bool = False):
+        """List posts for a specific channel."""
+        query = self.client.table("posts").select("*").eq("channel_id", channel_id)
+        if only_pending:
+            query = query.eq("published", False)
+        query = query.order("publish_time", desc=False)
+        res = query.execute()
+        return res.data or []
+
+    def get_scheduled_posts_by_channel(self, project_id: int = None):
+        """Get scheduled posts grouped by channel."""
+        query = self.client.table("posts").select("*, channels(name, chat_id)").eq("published", False).eq("draft", False)
+        if project_id:
+            query = query.eq("project_id", project_id)
+        query = query.order("publish_time", desc=False)
+        res = query.execute()
+        return res.data or []
+
+    def get_draft_posts_by_channel(self, project_id: int = None):
+        """Get draft posts grouped by channel."""
+        query = self.client.table("posts").select("*, channels(name, chat_id)").eq("draft", True)
+        if project_id:
+            query = query.eq("project_id", project_id)
+        query = query.order("created_at", desc=True)
+        res = query.execute()
+        return res.data or []
+
+    def get_notification_settings(self, user_id: int):
+        """Get notification settings for user."""
+        res = self.client.table("notification_settings").select("*").eq("user_id", user_id).execute()
+        data = res.data or []
+        return data[0] if data else None
+
+    def create_notification_settings(self, settings: dict):
+        """Create notification settings for user."""
+        res = self.client.table("notification_settings").insert(settings).execute()
+        return res.data[0] if res.data else None
+
+    def update_notification_settings(self, user_id: int, updates: dict):
+        """Update notification settings for user."""
+        res = self.client.table("notification_settings").update(updates).eq("user_id", user_id).execute()
+        return res.data[0] if res.data else None
