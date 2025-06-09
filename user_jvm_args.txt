@@ -1,0 +1,22 @@
+-Xms12G
+-Xmx16G
+-XX:+UseG1GC
+-XX:+UnlockExperimentalVMOptions
+-XX:MaxGCPauseMillis=50
+-XX:InitiatingHeapOccupancyPercent=25
+-XX:+DisableExplicitGC
+-XX:TargetSurvivorRatio=90
+-XX:G1NewSizePercent=30
+-XX:G1MaxNewSizePercent=60
+-XX:G1MixedGCLiveThresholdPercent=25
+-XX:G1HeapRegionSize=8M
+-XX:+AlwaysPreTouch
+-XX:+ParallelRefProcEnabled
+-XX:ConcGCThreads=4
+-XX:ParallelGCThreads=8
+
+-Dfile.encoding=UTF-8
+-Djava.net.preferIPv4Stack=true
+
+-XX:+OptimizeStringConcat
+# -XX:+UseStringDeduplication   (раскомментируйте, если не создаёт пиков CPU)
